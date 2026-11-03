@@ -47,8 +47,9 @@ def main():
         put(stack,end);m.reg_write(UC_X86_REG_ESP,stack)
         for reg,val in registers.items():m.reg_write(reg,val)
         m.emu_start(addr,stop,count=10000)
+    # Both hooks read the one shared tickrate::frameMsec variable directly.
     frame_msec=absolute_data('turretSoundClock')
-    frame_pointer=absolute_data('tickrate::(anonymous namespace)::turretCountdown')
+    assert absolute_data('tickrate::(anonymous namespace)::turretCountdown')==frame_msec
     countdown=symbol('tickrate::(anonymous namespace)::turretCountdown')[0]
     sound=symbol('turretSoundWin32')[0]
     # Use the emitted production register adapter, replacing only its target.
@@ -56,7 +57,7 @@ def main():
     code=bytearray(bytes.fromhex(next(x[3] for x in cases if x[:3]==[-1,3,0])))
     assert code.count(bytes.fromhex('b800000200'))==1
     code=code.replace(bytes.fromhex('b800000200'),b'\xb8'+struct.pack('<I',countdown))
-    m.mem_write(adapter,bytes(code));put(frame_pointer,frame_msec)
+    m.mem_write(adapter,bytes(code))
     original=bytes(m.mem_read(0x51c89c,6))
     assert original==bytes.fromhex('8b430883c0ce')
     m.mem_write(0x51c89c,b'\xe8'+struct.pack('<i',adapter-(0x51c89c+5))+b'\x90')

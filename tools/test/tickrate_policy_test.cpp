@@ -38,7 +38,7 @@ int main() {
             std::printf("%s[%d,%d,%d,\"",first?"":",",sequence,client,result);
             hex(bytes);std::printf("\"]");first=false;
         }
-    std::printf("],\"remainders\":[[7500,\"");hex(tickrate::archiveRemainder(7500));
+    std::printf("],\"remainders\":[[%d,\"",tickrate::archiveFrames);hex(tickrate::archiveRemainder(tickrate::archiveFrames));
     std::puts("\"]]}");
     return 0;
 }

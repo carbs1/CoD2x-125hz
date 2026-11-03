@@ -54,14 +54,16 @@ def test_remainders(cases):
     rng=random.Random(100)
     count=0
     for divisor,hexcode in cases:
+        code=bytes.fromhex(hexcode)
+        # The sequence only pushes and pops EBX, so one machine serves every value.
+        m=machine(code)
         values=[-2**31,-2**31+1,-divisor-1,-divisor,-1,0,1,divisor-1,divisor,
             divisor+1,2**31-1]+[rng.randint(-2**31,2**31-1) for _ in range(100)]
         for value in values:
-            m=machine(bytes.fromhex(hexcode))
             m.reg_write(UC_X86_REG_ECX,value&0xffffffff)
             m.reg_write(UC_X86_REG_EBX,0x12345678)
             m.reg_write(UC_X86_REG_ESI,0xabcdef00)
-            m.emu_start(CODE,CODE+len(bytes.fromhex(hexcode)),count=200)
+            m.emu_start(CODE,CODE+len(code),count=200)
             q=abs(value)//divisor*(-1 if value<0 else 1)
             expected=[q*divisor,value-q*divisor,q]
             for register,result in zip(REGS[:3],expected):
@@ -81,10 +83,11 @@ def test_byte_rings():
         windows=b'\x81\xe6'+struct.pack('<I',0x80000000|(size-1))+b'\x79\x08\x4e\x81\xce'+struct.pack('<I',(-size)&0xffffffff)+b'\x46'
         linux=b'\x89\xc8\x85\xc0\x79\x05\x05'+struct.pack('<I',size-1)+bytes([0xc1,0xf8,shift,0xc1,0xe0,shift,0x29,0xc1])
         values=[-2**31,-size-1,-size,-1,0,1,size-1,size,size+1,2**31-1]+[rng.randint(-2**31,2**31-1) for _ in range(100)]
-        for value in values:
-            expected=value-(abs(value)//size*(-1 if value<0 else 1))*size
-            for code,register in [(windows,UC_X86_REG_ESI),(linux,UC_X86_REG_ECX)]:
-                m=machine(code);m.reg_write(register,value&0xffffffff)
+        for code,register in [(windows,UC_X86_REG_ESI),(linux,UC_X86_REG_ECX)]:
+            m=machine(code)  # register-only arithmetic, reused for every value
+            for value in values:
+                expected=value-(abs(value)//size*(-1 if value<0 else 1))*size
+                m.reg_write(register,value&0xffffffff)
                 m.emu_start(CODE,CODE+len(code),count=100)
                 assert m.reg_read(register)==expected&0xffffffff,(mb,value,register)
                 count+=1
@@ -95,15 +98,15 @@ def test_history_bounds():
     code=bytes.fromhex('83f87f7f3a')
     branch=CODE+5+0x3a
     jump=lambda here:b'\xe9'+struct.pack('<i',END-(here+5))
+    retrieval=machine(code)
+    retrieval.mem_write(CODE+5,b'\xb9\x01\x00\x00\x00'+jump(CODE+10))
+    retrieval.mem_write(branch,b'\x31\xc9'+jump(branch+2))
+    invalidation=bytes.fromhex('83ff7f7e038d4181')
+    m=machine(invalidation)
     for age in range(513):
-        m=machine(code)
-        m.mem_write(CODE+5,b'\xb9\x01\x00\x00\x00'+jump(CODE+10))
-        m.mem_write(branch,b'\x31\xc9'+jump(branch+2))
-        m.reg_write(UC_X86_REG_EAX,age)
-        m.emu_start(CODE,END,count=30)
-        assert m.reg_read(UC_X86_REG_ECX)==int(age<128)
-        invalidation=bytes.fromhex('83ff7f7e038d4181')
-        m=machine(invalidation)
+        retrieval.reg_write(UC_X86_REG_EAX,age)
+        retrieval.emu_start(CODE,END,count=30)
+        assert retrieval.reg_read(UC_X86_REG_ECX)==int(age<128)
         m.reg_write(UC_X86_REG_EDI,age);m.reg_write(UC_X86_REG_ECX,age+1);m.reg_write(UC_X86_REG_EAX,1)
         m.emu_start(CODE,CODE+len(invalidation),count=30)
         assert m.reg_read(UC_X86_REG_EAX)==(age+1-127 if age>=128 else 1)

@@ -8,7 +8,6 @@
 #include "cod2_entity.h"
 #include "cod2_cmd.h"
 #include "tickrate_patch.h"
-#include <cstring>
 
 
 // Server frame rate above the original 20.
@@ -26,12 +25,18 @@ static float tickrate_waitFramesPerSecond = 20.0f;
 
 // How fast a dropped item moved since the last frame, G_RunItem uses the same frame time for the client's trajectory
 static float tickrate_itemVelocityScale = 20.0f;
-static int tickrate_frameMsec = 50;
+int tickrate::frameMsec = 50;
 static bool historyInstalled = false;
+
+static void printHistoryStatus()
+{
+	Com_Printf("TICKRATE_HISTORY server_slots=%d archive_frames=%d archive_mb=%d\n",
+		tickrate::maxDeltaSlots, tickrate::archiveFrames, tickrate::archiveBytes / (1024 * 1024));
+}
 
 static void historyCommand()
 {
-	Com_Printf("TICKRATE_HISTORY server_slots=128 archive_frames=7500 archive_mb=256\n");
+	printHistoryStatus();
 	if (!sv_maxclients || !svs_clients) return;
 	for (int i = 0; i < sv_maxclients->value.integer; ++i) {
 		if (svs_clients[i].state >= CS_CONNECTED) tickrate::printDeltaStats(i);
@@ -40,16 +45,17 @@ static void historyCommand()
 
 // Only the manned path runs every world frame. The idle turret sound path
 // remains on its original think cadence and must keep its own 50 ms decrement.
+// The native routine tests remaining > 0 and then subtracts exactly 50, so
+// pre-adding the difference makes one configured frame elapse per call.
 static void turretSoundClock(gentity_t* ent)
 {
-	if (ent->pTurretInfo) {
-		int& remaining = *(int*)((char*)ent->pTurretInfo + 40);
-		// Keep the native positive-timer branch reachable even when a slow
-		// configured frame consumes the entire remaining duration.
-		if (remaining > 0) {
-			remaining += 50 - tickrate_frameMsec;
-			if (remaining <= 0) remaining = 1;
-		}
+	if (!ent->pTurretInfo) return;
+	int& remaining = *(int*)((char*)ent->pTurretInfo + 40);
+	// Keep the native positive-timer branch reachable even when a slow
+	// configured frame consumes the entire remaining duration.
+	if (remaining > 0) {
+		remaining += 50 - tickrate::frameMsec;
+		if (remaining <= 0) remaining = 1;
 	}
 }
 #if COD2X_WIN32
@@ -90,7 +96,7 @@ static void tickrate_apply(int msec, bool realtimeWait)
 
 	// Rates such as 30 use a 33 ms frame, so integer 1000/33 loses velocity.
 	tickrate_itemVelocityScale = 1000.0f / msec;
-	tickrate_frameMsec = msec;
+	tickrate::frameMsec = msec;
 	#if COD2X_LINUX
 		// G_RunItem: VectorScale(delta, 20.0, ent->s.pos.trDelta)
 		patch_float(0x081080de + 1, tickrate_itemVelocityScale);
@@ -140,22 +146,16 @@ void tickrate_init()
 	// map. Capacities remain valid when this fork changes sv_fps live.
 	if (!historyInstalled) {
 		std::vector<tickrate::Patch> plan;
-		bool valid = tickrate::planDelta(plan, tickrate::maxDeltaSlots);
-		valid = tickrate::planTurretCountdown(plan, &tickrate_frameMsec) && valid;
+		bool valid = tickrate::planDelta(plan);
+		valid = tickrate::planTurretCountdown(plan) && valid;
 		tickrate::planArchive(plan);
 #if COD2X_WIN32
-		const auto destination = reinterpret_cast<uintptr_t>(&turretSoundWin32);
-		const unsigned int site = 0x0051ca35;
-		std::vector<unsigned char> original{0xe9,0xa6,0xfe,0xff,0xff};
+		tickrate::redirect(plan, 0x0051ca35, "mounted turret sound clock", {0xe9,0xa6,0xfe,0xff,0xff},
+			reinterpret_cast<const void*>(&turretSoundWin32), 0xe9);
 #else
-		const auto destination = reinterpret_cast<uintptr_t>(&turretSoundLinux);
-		const unsigned int site = 0x0810bb61;
-		std::vector<unsigned char> original{0xe8,0xc0,0xfd,0xff,0xff};
+		tickrate::redirect(plan, 0x0810bb61, "mounted turret sound clock", {0xe8,0xc0,0xfd,0xff,0xff},
+			reinterpret_cast<const void*>(&turretSoundLinux), 0xe8);
 #endif
-		tickrate::Patch sound{site,"mounted turret sound clock",original,original};
-		const int32_t displacement = static_cast<uint32_t>(destination) - (site + 5);
-		memcpy(sound.replacement.data()+1,&displacement,4);
-		plan.push_back(sound);
 		valid = tickrate::verifyPatches(plan) && valid;
 		if (!valid) {
 			tickrate::releaseDelta();
@@ -164,7 +164,7 @@ void tickrate_init()
 		}
 		tickrate::applyPatches(plan);
 		historyInstalled = true;
-		Com_Printf("TICKRATE_HISTORY server_slots=128 archive_frames=7500 archive_mb=256\n");
+		printHistoryStatus();
 	}
 	// Clients ask for their own snaps and rate, and most of them still have the settings from 20 and 40 Hz servers.
 	// Raises anything below these values, 0 keeps what the client asked for.
@@ -174,8 +174,6 @@ void tickrate_init()
 	sv_realtimeWait = Dvar_RegisterBool("sv_realtimeWait", false, (dvarFlags_e)(DVAR_CHANGEABLE_RESET));
 	Cmd_AddCommand("tickrate_history", historyCommand);
 }
-
-bool tickrate_can_reload() { return !historyInstalled; }
 
 void tickrate_patch()
 {

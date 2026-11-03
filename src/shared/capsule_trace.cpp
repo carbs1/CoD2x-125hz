@@ -149,19 +149,13 @@ static void cap_bone_point(const capsuleBone_t* bone, const float* local, float*
 		out[i] = local[0] * bone->axis[0][i] + local[1] * bone->axis[1][i] + local[2] * bone->axis[2][i] + bone->origin[i];
 }
 
-// Distance to the sphere surface along the ray, or CAP_NO_HIT. Double
-// intermediates avoid cancellation on long or nearly tangent shot rays. The
-// direction originates in float normalization, so retain its actual length.
-static float cap_ray_sphere(const float* origin, const float* dir, const float* center, float radius)
+// Distance to the sphere surface along the ray, or CAP_NO_HIT, from the
+// scalars of the ray and the sphere: md = (origin - center) . dir,
+// mm = |origin - center|^2, dd = |dir|^2. Double intermediates avoid
+// cancellation on long or nearly tangent shot rays. The direction originates
+// in float normalization, so retain its actual length.
+static float cap_sphere_entry(double md, double mm, double dd, float radius)
 {
-	double md = 0.0, mm = 0.0, dd = 0.0;
-	for (int i = 0; i < 3; i++)
-	{
-		double m = (double)origin[i] - center[i];
-		md += m * dir[i];
-		mm += m * m;
-		dd += (double)dir[i] * dir[i];
-	}
 	double c = mm - (double)radius * radius;
 	if (c <= 0.0) return 0.0f;
 	double disc = md * md - dd * c;
@@ -171,70 +165,69 @@ static float cap_ray_sphere(const float* origin, const float* dir, const float* 
 
 // Distance to a capsule whose radius changes from one end to the other,
 // negative if there is none in front. The body and its two rounded ends must
-// all participate in the nearest-entry comparison.
+// all participate in the nearest-entry comparison. A constant radius uses the
+// same finite-body solver, which also handles parallel rays without a
+// cancellation-sensitive discriminant guard.
 static float cap_ray_tapered(const float* origin, const float* dir, const float* a, const float* b, float radiusA, float radiusB)
 {
-	double aa = 0.0, nd = 0.0, mn = 0.0, dm = 0.0, mm = 0.0, dd = 0.0;
+	double aa = 0.0, nd = 0.0, mn = 0.0, dm = 0.0, mm = 0.0, dd = 0.0, dmB = 0.0, mmB = 0.0;
 	for (int i = 0; i < 3; i++)
 	{
 		double ab = (double)b[i] - a[i];
 		double m = (double)origin[i] - a[i];
+		double mB = (double)origin[i] - b[i];
 		aa += ab * ab;
 		nd += ab * dir[i];
 		mn += ab * m;
 		dm += m * dir[i];
 		mm += m * m;
 		dd += (double)dir[i] * dir[i];
+		dmB += mB * dir[i];
+		mmB += mB * mB;
 	}
-	float tA = cap_ray_sphere(origin, dir, a, radiusA);
-	float tB = cap_ray_sphere(origin, dir, b, radiusB);
+	float tA = cap_sphere_entry(dm, mm, dd, radiusA);
+	float tB = cap_sphere_entry(dmB, mmB, dd, radiusB);
 	double best = CAP_NO_HIT;
 	if (tA >= 0.0f && tA < best) best = tA;
 	if (tB >= 0.0f && tB < best) best = tB;
-	if (aa < 1e-8) return best == CAP_NO_HIT ? -1.0f : (float)best;
-
-	double dr = (double)radiusB - radiusA;
-	double e = nd * dr;
-	double f = mn * dr + radiusA * aa;
-	double qa = aa * aa * dd - aa * nd * nd - e * e;
-	double qb = 2.0 * aa * aa * dm - 2.0 * aa * mn * nd - 2.0 * f * e;
-	double qc = mm * aa * aa - aa * mn * mn - f * f;
-
-	// Starting inside the finite body is an immediate hit. End-sphere inside
-	// cases were already handled above, including their overlap with the body.
-	if (mn >= 0.0 && mn <= aa && qc <= 0.0) return 0.0f;
-
-	// A tapered body can have a negative quadratic coefficient (for example
-	// a shot along its axis). Either root can be the first in the finite body.
-	double roots[2];
-	int count = 0;
-	if (fabs(qa) > aa * aa * dd * 1e-14)
+	if (aa >= 1e-8)
 	{
-		double disc = qb * qb - 4.0 * qa * qc;
-		if (disc >= 0.0)
+		double dr = (double)radiusB - radiusA;
+		double e = nd * dr;
+		double f = mn * dr + radiusA * aa;
+		double qa = aa * aa * dd - aa * nd * nd - e * e;
+		double qb = 2.0 * aa * aa * dm - 2.0 * aa * mn * nd - 2.0 * f * e;
+		double qc = mm * aa * aa - aa * mn * mn - f * f;
+
+		// Starting inside the finite body is an immediate hit. End-sphere inside
+		// cases were already handled above, including their overlap with the body.
+		if (mn >= 0.0 && mn <= aa && qc <= 0.0) return 0.0f;
+
+		// A tapered body can have a negative quadratic coefficient (for example
+		// a shot along its axis). Either root can be the first in the finite body.
+		double roots[2];
+		int count = 0;
+		if (fabs(qa) > aa * aa * dd * 1e-14)
 		{
-			// This form avoids subtracting two nearly equal positive numbers.
-			double q = -0.5 * (qb + copysign(sqrt(disc), qb));
-			if (q == 0.0) roots[count++] = -qb / (2.0 * qa);
-			else { roots[count++] = q / qa; roots[count++] = qc / q; }
+			double disc = qb * qb - 4.0 * qa * qc;
+			if (disc >= 0.0)
+			{
+				// This form avoids subtracting two nearly equal positive numbers.
+				double q = -0.5 * (qb + copysign(sqrt(disc), qb));
+				if (q == 0.0) roots[count++] = -qb / (2.0 * qa);
+				else { roots[count++] = q / qa; roots[count++] = qc / q; }
+			}
+		}
+		else if (fabs(qb) > 1e-14)
+			roots[count++] = -qc / qb;
+		for (int i = 0; i < count; i++)
+		{
+			double t = roots[i];
+			double along = nd * t + mn;
+			if (t >= 0.0 && along >= 0.0 && along <= aa && t < best) best = t;
 		}
 	}
-	else if (fabs(qb) > 1e-14)
-		roots[count++] = -qc / qb;
-	for (int i = 0; i < count; i++)
-	{
-		double t = roots[i];
-		double along = nd * t + mn;
-		if (t >= 0.0 && along >= 0.0 && along <= aa && t < best) best = t;
-	}
 	return best == CAP_NO_HIT ? -1.0f : (float)best;
-}
-
-// A constant-radius capsule uses the same robust finite-body solver. This also
-// handles parallel rays without a cancellation-sensitive discriminant guard.
-static float cap_ray_capsule(const float* origin, const float* dir, const float* a, const float* b, float radius)
-{
-	return cap_ray_tapered(origin, dir, a, b, radius, radius);
 }
 
 // Closest point on the segment; returns the fraction along it
@@ -293,35 +286,31 @@ static void cap_test(void* context, const float* a, const float* b, float radius
 	if (priority <= 1)
 		return;
 
-	float t;
+	// Radii this close are the same constant-radius capsule
 	if (fabsf(radiusB - radiusA) < 0.02f)
-		t = cap_ray_capsule(s->start, s->dir, a, b, radiusA);
-	else
-		t = cap_ray_tapered(s->start, s->dir, a, b, radiusA, radiusB);
-
+		radiusB = radiusA;
+	float t = cap_ray_tapered(s->start, s->dir, a, b, radiusA, radiusB);
 	if (t < 0.0f)
 		return;
 	float fraction = t / s->length;
 	if (fraction >= s->limit)
 		return;
-	float normal[3];
-	float closest[3];
-	float point[3];
-	cap_copy(s->start, point);
-	cap_add_scaled(point, s->dir, t);
-	cap_closest_on_segment(point, a, b, closest);
-	cap_normal(point, closest, normal);
-
 	if (priority < s->bestPriority)
 		return;
 	if (priority == s->bestPriority && fraction >= s->bestFraction)
 		return;
 
+	float closest[3];
+	float point[3];
+	cap_copy(s->start, point);
+	cap_add_scaled(point, s->dir, t);
+	cap_closest_on_segment(point, a, b, closest);
+	cap_normal(point, closest, s->bestNormal);
+
 	s->bestFraction = fraction;
 	s->bestPriority = priority;
 	s->bestHit = hit;
 	s->bestPartName = partName;
-	cap_copy(normal, s->bestNormal);
 }
 
 static void cap_torso_shapes(const capsuleBone_t* bones, const capsuleBodyFit_t* body, float scale, capsuleShapeCallback_t callback, void* context)

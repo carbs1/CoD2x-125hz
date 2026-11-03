@@ -101,3 +101,20 @@ The Python instruction tests need `unicorn`; the compiled-hook replay also
 needs `pefile` and `capstone`. No proprietary game executable is included with
 these tests. Runtime evidence and tested artifact hashes are summarized in
 [125hz-validation.json](125hz-validation.json).
+
+## Claude Code simplification pass
+
+Claude Code `/simplify` reviewed `be4f197` for reuse, structure and efficiency.
+The follow-up shares redirect/operand planning, capacity constants and the
+process-lifetime reload guard; removes an unused receive-counter hook and dead
+exports; performs one snapshot-block lookup per client during ping calculation;
+and reuses capsule scalars and test emulators. Capsule tolerances, root selection,
+priority and wall limits remain intact. No admission or rollout policy changed.
+
+The invoking agent reviewed the edits, tightened operand bounds to reject
+overflowing ranges, and added a patch-planner regression suite. Both platforms
+pass all four CTest suites; both optimized SSE2 capsule tests and the x86/turret
+replays pass. An offline comparison of the three server planners matches all
+41 Windows and 40 Linux patch sites after normalizing address-dependent branch
+displacements. This pass launched no game and changed no live server.
+See [125hz-simplify-validation.json](125hz-simplify-validation.json).

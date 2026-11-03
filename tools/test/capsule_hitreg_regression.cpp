@@ -2,8 +2,8 @@
 // cases can be checked without changing the game's public API.
 #include "../../src/shared/capsule_trace.cpp"
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <random>
@@ -59,7 +59,8 @@ static double reference(const float* o, const float* d, const float* a,
 }
 
 static float primitive(const float* o,const float* d,const float* a,const float* b,float ra,float rb) {
-    float t=std::fabs(ra-rb)<.02f ? cap_ray_capsule(o,d,a,b,ra) : cap_ray_tapered(o,d,a,b,ra,rb);
+    // Same near-equal radius normalisation as cap_test.
+    float t=cap_ray_tapered(o,d,a,b,ra,std::fabs(ra-rb)<.02f?ra:rb);
     if(t<0) {
         float c[3],off[3];float along=cap_closest_on_segment(o,a,b,c);
         cap_sub(o,c,off);

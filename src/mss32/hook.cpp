@@ -39,8 +39,7 @@
 #include "../shared/gsc.h"
 #include "../shared/match.h"
 #include "../shared/weapons.h"
-#include "../shared/tickrate.h"
-#include "tickrate_history.h"
+#include "../shared/tickrate_patch.h"
 
 HMODULE hModule;
 unsigned int gfx_module_addr;
@@ -80,7 +79,7 @@ void hook_Com_Frame()
 
         // New DLL is requested to be loaded, unload the old one and load the new one
         if (hotreload_requested) {
-            if (!tickrate_can_reload() || !tickrate_history_can_reload()) {
+            if (!tickrate::canReload()) {
                 hotreload_requested = false;
                 Com_Printf("Tickrate history is relocated; restart the process instead of reloading the DLL.\n");
             } else {
