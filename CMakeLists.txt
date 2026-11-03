@@ -4,6 +4,27 @@ cmake_minimum_required(VERSION 3.10)
 
 project(CoD2x LANGUAGES C CXX)
 
+include(CTest)
+if(BUILD_TESTING)
+  add_executable(capsule_trace_test tools/test/capsule_trace_test.cpp
+    src/shared/capsule_trace.cpp src/shared/capsule_models.cpp)
+  add_executable(tickrate_policy_test tools/test/tickrate_policy_test.cpp)
+  add_executable(capsule_hitreg_regression tools/test/capsule_hitreg_regression.cpp
+    src/shared/capsule_models.cpp)
+  target_compile_features(capsule_hitreg_regression PRIVATE cxx_std_17)
+  foreach(test_target capsule_trace_test tickrate_policy_test capsule_hitreg_regression)
+    target_include_directories(${test_target} PRIVATE src/shared)
+    target_compile_features(${test_target} PRIVATE cxx_std_11)
+    # Exercise the same 32-bit x87 math mode as the engine; -msse alone does
+    # not select SSE floating-point arithmetic on x86 GCC.
+    target_compile_options(${test_target} PRIVATE -m32 -msse -O0)
+    set_target_properties(${test_target} PROPERTIES LINK_FLAGS "-m32")
+  endforeach()
+  add_test(NAME capsule_trace COMMAND capsule_trace_test)
+  add_test(NAME tickrate_policy COMMAND tickrate_policy_test)
+  add_test(NAME capsule_hitreg_regression COMMAND capsule_hitreg_regression)
+endif()
+
 
 # -----------------------------------
 # Function that collects all files with given extensions from a base directory (recursively)
@@ -138,7 +159,7 @@ if (WIN32)
           "${CMAKE_SOURCE_DIR}/src/other/generate_mss32_symbols_h.ps1"
           -DllPath "$<TARGET_FILE:mss32>"
           -OutHdr  "${CMAKE_SOURCE_DIR}/src/mss32/symbols_mss32.h"
-          -NmExe   "${CMAKE_SOURCE_DIR}/tools/mingw/bin/nm.exe"
+          -NmExe   "${CMAKE_NM}"
       COMMENT "Generating symbols_mss32.h"
       VERBATIM)
   endif()

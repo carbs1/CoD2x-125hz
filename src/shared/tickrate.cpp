@@ -4,6 +4,11 @@
 #include "cod2_dvars.h"
 #include "cod2_server.h"
 #include "patch.h"
+#include "cod2_common.h"
+#include "cod2_entity.h"
+#include "cod2_cmd.h"
+#include "tickrate_patch.h"
+#include <cstring>
 
 
 // Server frame rate above the original 20.
@@ -21,6 +26,49 @@ static float tickrate_waitFramesPerSecond = 20.0f;
 
 // How fast a dropped item moved since the last frame, G_RunItem uses the same frame time for the client's trajectory
 static float tickrate_itemVelocityScale = 20.0f;
+static int tickrate_frameMsec = 50;
+static bool historyInstalled = false;
+
+static void historyCommand()
+{
+	Com_Printf("TICKRATE_HISTORY server_slots=128 archive_frames=7500 archive_mb=256\n");
+	if (!sv_maxclients || !svs_clients) return;
+	for (int i = 0; i < sv_maxclients->value.integer; ++i) {
+		if (svs_clients[i].state >= CS_CONNECTED) tickrate::printDeltaStats(i);
+	}
+}
+
+// Only the manned path runs every world frame. The idle turret sound path
+// remains on its original think cadence and must keep its own 50 ms decrement.
+static void turretSoundClock(gentity_t* ent)
+{
+	if (ent->pTurretInfo) {
+		int& remaining = *(int*)((char*)ent->pTurretInfo + 40);
+		// Keep the native positive-timer branch reachable even when a slow
+		// configured frame consumes the entire remaining duration.
+		if (remaining > 0) {
+			remaining += 50 - tickrate_frameMsec;
+			if (remaining <= 0) remaining = 1;
+		}
+	}
+}
+#if COD2X_WIN32
+static int turretSoundWin32()
+{
+	gentity_t* ent;
+	ASM(movr, ent, "eax");
+	turretSoundClock(ent);
+	int result;
+	ASM_CALL(RETURN(result), 0x0051c8e0, 0, EAX(ent));
+	return result;
+}
+#else
+static void turretSoundLinux(gentity_t* ent)
+{
+	turretSoundClock(ent);
+	reinterpret_cast<void (__cdecl*)(gentity_t*)>(0x0810b926)(ent);
+}
+#endif
 
 static dvar_t* tickrate_getFps()
 {
@@ -40,7 +88,9 @@ static void tickrate_apply(int msec, bool realtimeWait)
 	// G_RunItem: ent->s.pos.trDuration = 50
 	patch_int32(ADDR(0x005209f5 + 3, 0x08108092 + 3), msec);
 
-	tickrate_itemVelocityScale = (float)frames;
+	// Rates such as 30 use a 33 ms frame, so integer 1000/33 loses velocity.
+	tickrate_itemVelocityScale = 1000.0f / msec;
+	tickrate_frameMsec = msec;
 	#if COD2X_LINUX
 		// G_RunItem: VectorScale(delta, 20.0, ent->s.pos.trDelta)
 		patch_float(0x081080de + 1, tickrate_itemVelocityScale);
@@ -86,13 +136,46 @@ void tickrate_frame()
 
 void tickrate_init()
 {
+	// Storage and all native bounds are installed together, before the first
+	// map. Capacities remain valid when this fork changes sv_fps live.
+	if (!historyInstalled) {
+		std::vector<tickrate::Patch> plan;
+		bool valid = tickrate::planDelta(plan, tickrate::maxDeltaSlots);
+		valid = tickrate::planTurretCountdown(plan, &tickrate_frameMsec) && valid;
+		tickrate::planArchive(plan);
+#if COD2X_WIN32
+		const auto destination = reinterpret_cast<uintptr_t>(&turretSoundWin32);
+		const unsigned int site = 0x0051ca35;
+		std::vector<unsigned char> original{0xe9,0xa6,0xfe,0xff,0xff};
+#else
+		const auto destination = reinterpret_cast<uintptr_t>(&turretSoundLinux);
+		const unsigned int site = 0x0810bb61;
+		std::vector<unsigned char> original{0xe8,0xc0,0xfd,0xff,0xff};
+#endif
+		tickrate::Patch sound{site,"mounted turret sound clock",original,original};
+		const int32_t displacement = static_cast<uint32_t>(destination) - (site + 5);
+		memcpy(sound.replacement.data()+1,&displacement,4);
+		plan.push_back(sound);
+		valid = tickrate::verifyPatches(plan) && valid;
+		if (!valid) {
+			tickrate::releaseDelta();
+			Com_Error(ERR_FATAL,"Expanded tickrate history verification failed; native arenas unchanged");
+			return;
+		}
+		tickrate::applyPatches(plan);
+		historyInstalled = true;
+		Com_Printf("TICKRATE_HISTORY server_slots=128 archive_frames=7500 archive_mb=256\n");
+	}
 	// Clients ask for their own snaps and rate, and most of them still have the settings from 20 and 40 Hz servers.
 	// Raises anything below these values, 0 keeps what the client asked for.
 	sv_minSnaps = Dvar_RegisterInt("sv_minSnaps", 0, 0, 125, (dvarFlags_e)(DVAR_CHANGEABLE_RESET));
 	sv_minRate = Dvar_RegisterInt("sv_minRate", 0, 0, 100000, (dvarFlags_e)(DVAR_CHANGEABLE_RESET));
 
 	sv_realtimeWait = Dvar_RegisterBool("sv_realtimeWait", false, (dvarFlags_e)(DVAR_CHANGEABLE_RESET));
+	Cmd_AddCommand("tickrate_history", historyCommand);
 }
+
+bool tickrate_can_reload() { return !historyInstalled; }
 
 void tickrate_patch()
 {

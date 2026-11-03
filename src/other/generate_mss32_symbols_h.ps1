@@ -7,6 +7,7 @@ param(
     [string]$OutHdr,    # full path to emit symbols_mss32.h into
     [string]$NmExe      # full path to nm.exe
 )
+$ErrorActionPreference = 'Stop'
 
 # ---------------------------------------------------------------------------
 # Simplify a demangled C++ name to just the qualified function name.
@@ -82,6 +83,7 @@ Write-Host "  ImageBase: 0x$('{0:X8}' -f $imageBase)" -ForegroundColor DarkCyan
 # Output format per line: "XXXXXXXX [Tt] name"
 # ---------------------------------------------------------------------------
 $nmOutput = & $NmExe --defined-only --numeric-sort --demangle $DllPath 2>&1
+if ($LASTEXITCODE -ne 0) { throw "nm failed with exit code $LASTEXITCODE" }
 
 $linePattern = '^([0-9a-fA-F]{8})\s+[Tt]\s+(.+)$'
 $entries = [System.Collections.Generic.List[object]]::new()

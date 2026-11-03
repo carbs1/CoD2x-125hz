@@ -1,0 +1,597 @@
+{
+  "baseline": "6265e92e1aba7addbd3a0f92d7bb580f37e6cf3c",
+  "branch": "fix/125hz-timing-and-capsules",
+  "date": "2026-11-02",
+  "ctest": {
+    "windows32_x87": "3/3 passed",
+    "linux32_x87": "3/3 passed"
+  },
+  "capsule_regression": {
+    "modes": [
+      "Windows32 x87 O0",
+      "Linux32 x87 O0",
+      "Windows32 SSE2 O2",
+      "Linux32 SSE2 O2"
+    ],
+    "primitive_rays_per_mode": 20000,
+    "public_pose_model_rays_per_mode": 18000,
+    "edge_assertions_per_mode": 23,
+    "corrected_disagreements": 0,
+    "baseline_primitive_disagreements": 462,
+    "baseline_public_disagreements": 36,
+    "scope": "Synthetic poses and geometry, not measured gameplay shot success."
+  },
+  "x86": {
+    "policy_checks": 18,
+    "register_adapters": 448,
+    "archive_signed_remainders": 111,
+    "payload_ring_arithmetic": 880,
+    "client_age_boundary_cases": 1026
+  },
+  "compiled_windows_turret_native_replay": {
+    "passed": true,
+    "timer_fixtures": 60,
+    "native_paths": 3,
+    "samples": [
+      {
+        "frame_ms": 1,
+        "duration_ms": 1,
+        "manned_callbacks": 1,
+        "elapsed_ms": 1,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 1,
+        "duration_ms": 8,
+        "manned_callbacks": 8,
+        "elapsed_ms": 8,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 1,
+        "duration_ms": 31,
+        "manned_callbacks": 31,
+        "elapsed_ms": 31,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 1,
+        "duration_ms": 50,
+        "manned_callbacks": 50,
+        "elapsed_ms": 50,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 1,
+        "duration_ms": 100,
+        "manned_callbacks": 100,
+        "elapsed_ms": 100,
+        "idle_callbacks": 2
+      },
+      {
+        "frame_ms": 1,
+        "duration_ms": 997,
+        "manned_callbacks": 997,
+        "elapsed_ms": 997,
+        "idle_callbacks": 20
+      },
+      {
+        "frame_ms": 8,
+        "duration_ms": 1,
+        "manned_callbacks": 1,
+        "elapsed_ms": 8,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 8,
+        "duration_ms": 8,
+        "manned_callbacks": 1,
+        "elapsed_ms": 8,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 8,
+        "duration_ms": 31,
+        "manned_callbacks": 4,
+        "elapsed_ms": 32,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 8,
+        "duration_ms": 50,
+        "manned_callbacks": 7,
+        "elapsed_ms": 56,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 8,
+        "duration_ms": 100,
+        "manned_callbacks": 13,
+        "elapsed_ms": 104,
+        "idle_callbacks": 2
+      },
+      {
+        "frame_ms": 8,
+        "duration_ms": 997,
+        "manned_callbacks": 125,
+        "elapsed_ms": 1000,
+        "idle_callbacks": 20
+      },
+      {
+        "frame_ms": 10,
+        "duration_ms": 1,
+        "manned_callbacks": 1,
+        "elapsed_ms": 10,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 10,
+        "duration_ms": 8,
+        "manned_callbacks": 1,
+        "elapsed_ms": 10,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 10,
+        "duration_ms": 31,
+        "manned_callbacks": 4,
+        "elapsed_ms": 40,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 10,
+        "duration_ms": 50,
+        "manned_callbacks": 5,
+        "elapsed_ms": 50,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 10,
+        "duration_ms": 100,
+        "manned_callbacks": 10,
+        "elapsed_ms": 100,
+        "idle_callbacks": 2
+      },
+      {
+        "frame_ms": 10,
+        "duration_ms": 997,
+        "manned_callbacks": 100,
+        "elapsed_ms": 1000,
+        "idle_callbacks": 20
+      },
+      {
+        "frame_ms": 16,
+        "duration_ms": 1,
+        "manned_callbacks": 1,
+        "elapsed_ms": 16,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 16,
+        "duration_ms": 8,
+        "manned_callbacks": 1,
+        "elapsed_ms": 16,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 16,
+        "duration_ms": 31,
+        "manned_callbacks": 2,
+        "elapsed_ms": 32,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 16,
+        "duration_ms": 50,
+        "manned_callbacks": 4,
+        "elapsed_ms": 64,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 16,
+        "duration_ms": 100,
+        "manned_callbacks": 7,
+        "elapsed_ms": 112,
+        "idle_callbacks": 2
+      },
+      {
+        "frame_ms": 16,
+        "duration_ms": 997,
+        "manned_callbacks": 63,
+        "elapsed_ms": 1008,
+        "idle_callbacks": 20
+      },
+      {
+        "frame_ms": 25,
+        "duration_ms": 1,
+        "manned_callbacks": 1,
+        "elapsed_ms": 25,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 25,
+        "duration_ms": 8,
+        "manned_callbacks": 1,
+        "elapsed_ms": 25,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 25,
+        "duration_ms": 31,
+        "manned_callbacks": 2,
+        "elapsed_ms": 50,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 25,
+        "duration_ms": 50,
+        "manned_callbacks": 2,
+        "elapsed_ms": 50,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 25,
+        "duration_ms": 100,
+        "manned_callbacks": 4,
+        "elapsed_ms": 100,
+        "idle_callbacks": 2
+      },
+      {
+        "frame_ms": 25,
+        "duration_ms": 997,
+        "manned_callbacks": 40,
+        "elapsed_ms": 1000,
+        "idle_callbacks": 20
+      },
+      {
+        "frame_ms": 33,
+        "duration_ms": 1,
+        "manned_callbacks": 1,
+        "elapsed_ms": 33,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 33,
+        "duration_ms": 8,
+        "manned_callbacks": 1,
+        "elapsed_ms": 33,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 33,
+        "duration_ms": 31,
+        "manned_callbacks": 1,
+        "elapsed_ms": 33,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 33,
+        "duration_ms": 50,
+        "manned_callbacks": 2,
+        "elapsed_ms": 66,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 33,
+        "duration_ms": 100,
+        "manned_callbacks": 4,
+        "elapsed_ms": 132,
+        "idle_callbacks": 2
+      },
+      {
+        "frame_ms": 33,
+        "duration_ms": 997,
+        "manned_callbacks": 31,
+        "elapsed_ms": 1023,
+        "idle_callbacks": 20
+      },
+      {
+        "frame_ms": 50,
+        "duration_ms": 1,
+        "manned_callbacks": 1,
+        "elapsed_ms": 50,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 50,
+        "duration_ms": 8,
+        "manned_callbacks": 1,
+        "elapsed_ms": 50,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 50,
+        "duration_ms": 31,
+        "manned_callbacks": 1,
+        "elapsed_ms": 50,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 50,
+        "duration_ms": 50,
+        "manned_callbacks": 1,
+        "elapsed_ms": 50,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 50,
+        "duration_ms": 100,
+        "manned_callbacks": 2,
+        "elapsed_ms": 100,
+        "idle_callbacks": 2
+      },
+      {
+        "frame_ms": 50,
+        "duration_ms": 997,
+        "manned_callbacks": 20,
+        "elapsed_ms": 1000,
+        "idle_callbacks": 20
+      },
+      {
+        "frame_ms": 100,
+        "duration_ms": 1,
+        "manned_callbacks": 1,
+        "elapsed_ms": 100,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 100,
+        "duration_ms": 8,
+        "manned_callbacks": 1,
+        "elapsed_ms": 100,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 100,
+        "duration_ms": 31,
+        "manned_callbacks": 1,
+        "elapsed_ms": 100,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 100,
+        "duration_ms": 50,
+        "manned_callbacks": 1,
+        "elapsed_ms": 100,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 100,
+        "duration_ms": 100,
+        "manned_callbacks": 1,
+        "elapsed_ms": 100,
+        "idle_callbacks": 2
+      },
+      {
+        "frame_ms": 100,
+        "duration_ms": 997,
+        "manned_callbacks": 10,
+        "elapsed_ms": 1000,
+        "idle_callbacks": 20
+      },
+      {
+        "frame_ms": 200,
+        "duration_ms": 1,
+        "manned_callbacks": 1,
+        "elapsed_ms": 200,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 200,
+        "duration_ms": 8,
+        "manned_callbacks": 1,
+        "elapsed_ms": 200,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 200,
+        "duration_ms": 31,
+        "manned_callbacks": 1,
+        "elapsed_ms": 200,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 200,
+        "duration_ms": 50,
+        "manned_callbacks": 1,
+        "elapsed_ms": 200,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 200,
+        "duration_ms": 100,
+        "manned_callbacks": 1,
+        "elapsed_ms": 200,
+        "idle_callbacks": 2
+      },
+      {
+        "frame_ms": 200,
+        "duration_ms": 997,
+        "manned_callbacks": 5,
+        "elapsed_ms": 1000,
+        "idle_callbacks": 20
+      },
+      {
+        "frame_ms": 1000,
+        "duration_ms": 1,
+        "manned_callbacks": 1,
+        "elapsed_ms": 1000,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 1000,
+        "duration_ms": 8,
+        "manned_callbacks": 1,
+        "elapsed_ms": 1000,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 1000,
+        "duration_ms": 31,
+        "manned_callbacks": 1,
+        "elapsed_ms": 1000,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 1000,
+        "duration_ms": 50,
+        "manned_callbacks": 1,
+        "elapsed_ms": 1000,
+        "idle_callbacks": 1
+      },
+      {
+        "frame_ms": 1000,
+        "duration_ms": 100,
+        "manned_callbacks": 1,
+        "elapsed_ms": 1000,
+        "idle_callbacks": 2
+      },
+      {
+        "frame_ms": 1000,
+        "duration_ms": 997,
+        "manned_callbacks": 1,
+        "elapsed_ms": 1000,
+        "idle_callbacks": 20
+      }
+    ]
+  },
+  "windows_runtime": {
+    "events": [
+      {
+        "name": "server_started",
+        "pid": 37072
+      },
+      {
+        "name": "server_history",
+        "response": "TICKRATE_HISTORY server_slots=128 archive_frames=7500 archive_mb=256\nTICKRATE_DELTA slot=0 history_slots=32 sent_delta=189 sent_full=0 compat_full=0 last_age_frames=1 max_age_frames=1\nTICKRATE_DELTA slot=1 history_slots=32 sent_delta=189 sent_full=0 compat_full=0 last_age_frames=1 max_age_frames=1\n"
+      },
+      {
+        "name": "server_config",
+        "fps": "\"sv_fps\" is: \"125^7\" default: \"20^7\"\n  Domain is any integer from 10 to 1000\n",
+        "capsules": "\"sv_capsuleHitboxes\" is: \"1^7\" default: \"0^7\"\n  Domain is any integer from 0 to 2\n",
+        "antilag": "\"g_antilag\" is: \"1^7\" default: \"1^7\"\n  Domain is 0 or 1\n"
+      },
+      {
+        "name": "client_connected",
+        "state": {
+          "pid": 41996,
+          "state": 8,
+          "demo": 0,
+          "recording": 0,
+          "snapshot": 395,
+          "server_time": 15044,
+          "volume": 0.0
+        },
+        "history_log": [
+          "TICKRATE_HISTORY server_slots=128 archive_frames=7500 archive_mb=256",
+          "TICKRATE_CLIENT_HISTORY slots=128 parse_slots=8192 sites=71"
+        ]
+      },
+      {
+        "name": "local",
+        "status": "TICKRATE_HISTORY server_slots=128 archive_frames=7500 archive_mb=256\nTICKRATE_DELTA slot=0 history_slots=32 sent_delta=2974 sent_full=0 compat_full=0 last_age_frames=1 max_age_frames=1\nTICKRATE_DELTA slot=1 history_slots=32 sent_delta=2974 sent_full=0 compat_full=0 last_age_frames=1 max_age_frames=1\nTICKRATE_DELTA slot=2 history_slots=128 sent_delta=1530 sent_full=2 compat_full=0 last_age_frames=1 max_age_frames=7\n",
+        "state": {
+          "pid": 41996,
+          "state": 8,
+          "demo": 0,
+          "recording": 0,
+          "snapshot": 1917,
+          "server_time": 27220,
+          "volume": 0.0
+        }
+      },
+      {
+        "name": "400ms_rtt",
+        "status": "TICKRATE_HISTORY server_slots=128 archive_frames=7500 archive_mb=256\nTICKRATE_DELTA slot=0 history_slots=32 sent_delta=4495 sent_full=0 compat_full=0 last_age_frames=1 max_age_frames=1\nTICKRATE_DELTA slot=1 history_slots=32 sent_delta=4495 sent_full=0 compat_full=0 last_age_frames=1 max_age_frames=1\nTICKRATE_DELTA slot=2 history_slots=128 sent_delta=3051 sent_full=2 compat_full=0 last_age_frames=52 max_age_frames=52\n",
+        "state": {
+          "pid": 41996,
+          "state": 8,
+          "demo": 0,
+          "recording": 0,
+          "snapshot": 3413,
+          "server_time": 39188,
+          "volume": 0.0
+        }
+      },
+      {
+        "name": "800ms_rtt",
+        "status": "TICKRATE_HISTORY server_slots=128 archive_frames=7500 archive_mb=256\nTICKRATE_DELTA slot=0 history_slots=32 sent_delta=6014 sent_full=0 compat_full=0 last_age_frames=1 max_age_frames=1\nTICKRATE_DELTA slot=1 history_slots=32 sent_delta=6014 sent_full=0 compat_full=0 last_age_frames=1 max_age_frames=1\nTICKRATE_DELTA slot=2 history_slots=128 sent_delta=4570 sent_full=2 compat_full=0 last_age_frames=102 max_age_frames=103\n",
+        "state": {
+          "pid": 41996,
+          "state": 8,
+          "demo": 0,
+          "recording": 0,
+          "snapshot": 4908,
+          "server_time": 51148,
+          "volume": 0.0
+        }
+      },
+      {
+        "name": "restart_reply",
+        "response": ""
+      },
+      {
+        "name": "map_restart",
+        "state": {
+          "pid": 41996,
+          "state": 8,
+          "demo": 0,
+          "recording": 0,
+          "snapshot": 6232,
+          "server_time": 63744,
+          "volume": 0.0
+        },
+        "history": "TICKRATE_HISTORY server_slots=128 archive_frames=7500 archive_mb=256\nTICKRATE_DELTA slot=0 history_slots=32 sent_delta=6409 sent_full=0 compat_full=0 last_age_frames=1 max_age_frames=1\nTICKRATE_DELTA slot=1 history_slots=32 sent_delta=6409 sent_full=0 compat_full=0 last_age_frames=1 max_age_frames=1\nTICKRATE_DELTA slot=2 history_slots=128 sent_delta=5494 sent_full=5 compat_full=0 last_age_frames=1 max_age_frames=103\nTICKRATE_DELTA slot=3 history_slots=32 sent_delta=481 sent_full=0 compat_full=0 last_age_frames=1 max_age_frames=1\nTICKRATE_DELTA slot=4 history_slots=32 sent_delta=431 sent_full=0 compat_full=0 last_age_frames=1 max_age_frames=1\n"
+      },
+      {
+        "name": "vm_timers",
+        "integer": "\"tick_fixture_integer_ms\" is: \"1000^7\" default: \"1000^7\"\n  Domain is any text\n",
+        "floating": "\"tick_fixture_float_ms\" is: \"1000^7\" default: \"1000^7\"\n  Domain is any text\n"
+      },
+      {
+        "name": "legacy32_400ms_rtt_capsules_firing_smoke",
+        "state": {
+          "pid": 38324,
+          "state": 8,
+          "demo": 0,
+          "recording": 0,
+          "snapshot": 2137,
+          "server_time": 87512,
+          "volume": 0.0
+        },
+        "history": "TICKRATE_HISTORY server_slots=128 archive_frames=7500 archive_mb=256\nTICKRATE_DELTA slot=0 history_slots=32 sent_delta=6409 sent_full=0 compat_full=0 last_age_frames=1 max_age_frames=1\nTICKRATE_DELTA slot=1 history_slots=32 sent_delta=6409 sent_full=0 compat_full=0 last_age_frames=1 max_age_frames=1\nTICKRATE_DELTA slot=2 history_slots=32 sent_delta=65 sent_full=1715 compat_full=878 last_age_frames=0 max_age_frames=28\nTICKRATE_DELTA slot=3 history_slots=32 sent_delta=3457 sent_full=0 compat_full=0 last_age_frames=1 max_age_frames=1\nTICKRATE_DELTA slot=4 history_slots=32 sent_delta=3407 sent_full=0 compat_full=0 last_age_frames=1 max_age_frames=1\n"
+      }
+    ],
+    "passed": true
+  },
+  "linux_runtime": {
+    "passed": true,
+    "history": "print\nTICKRATE_HISTORY server_slots=128 archive_frames=7500 archive_mb=256\n",
+    "before": {
+      "frames": 439,
+      "bytes": 31893
+    },
+    "after": {
+      "frames": 8314,
+      "bytes": 606520
+    },
+    "status": "print\nmap: mp_toujane\nnum score ping guid   name            lastmsg address               qport rate\n--- ----- ---- ------ --------------- ------- --------------------- ----- -----\n\n",
+    "closed": true
+  },
+  "remaining_validation": [
+    "Aimed hits/damage during animated stance transitions and direction changes under latency, anti-lag off/on",
+    "Real model fitting and busy-server performance",
+    "Payload-ring saturation/retention under load",
+    "Linux connected-client and mounted-turret gameplay"
+  ],
+  "artifacts": {
+    "mss32.build.dll": {
+      "sha256": "747832ab45ce42e7fd19f5ed2e45904d5390afbf6197b70d6d4fc7de83c1d1ad",
+      "bytes": 6239758
+    },
+    "libCoD2x.so": {
+      "sha256": "4955602f530aa7b4b4fbce1f440aa1080fbdf84daccfd3dacc7807afd69bbbe2",
+      "bytes": 10073976
+    }
+  }
+}

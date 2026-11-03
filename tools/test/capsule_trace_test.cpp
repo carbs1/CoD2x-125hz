@@ -160,7 +160,7 @@ int main()
 		memset(&r, 0, sizeof(r));
 		r.fraction = 0.1f;
 		capsule_trace(skeleton, start, end, NULL, 1.0f, &r);
-		check("nothing past the given fraction", r.partGroup == 0 && r.fraction == 0.1f);
+		check("nothing past the given fraction", r.partGroup == 0 && fabsf(r.fraction - 0.1f) < 1e-6f);
 	}
 
 	// Starting inside of the body

@@ -4,6 +4,9 @@
 CoD2x is a modification of Call of Duty 2. It is build on top of 1.3 version.
 It focuses on fixing bugs and adding new features to the game.
 
+Experimental 125 Hz branch: [timing corrections and validation](docs/125hz-timing-review.md),
+[capsule shot-geometry tests](docs/capsule-hitreg-validation.md).
+
 ⚠️ Disclaimer
 - The CoD2x patch is a community-made, unofficial modification for Call of Duty 2.
 - It is provided free of charge, “as is”, without any warranty of functionality or support.

@@ -18,6 +18,7 @@
 #include "gsc_websocket.h"
 #include "match.h"
 #include "tickrate.h"
+#include "tickrate_policy.h"
 
 extern dvar_t* sv_minSnaps;
 extern dvar_t* sv_minRate;
@@ -336,31 +337,9 @@ void SV_UserinfoChanged( client_t *cl )
 
 	// snaps command
 	val = Info_ValueForKey (cl->userinfo, "snaps");
-	if (strlen(val))
-	{
-		i = atoi(val);
-		if ( i < 1 )
-		{
-			i = 1;
-		}
-		// CoD2x: from 30 to 125
-		else if ( i > 125 )
-		{
-			i = 125;
-		}
-		// CoD2x: end
-		// CoD2x: server can raise the snaps of clients with settings from slower servers
-		if (sv_minSnaps && i < sv_minSnaps->value.integer)
-		{
-			i = sv_minSnaps->value.integer;
-		}
-		// CoD2x: End
-		cl->snapshotMsec = 1000/i;
-	}
-	else
-	{
-		cl->snapshotMsec = 50;
-	}
+	// The server floor also applies when old/custom clients omit snaps.
+	cl->snapshotMsec = tickrate::snapshotInterval(atoi(val), strlen(val) != 0,
+		sv_minSnaps ? sv_minSnaps->value.integer : 0);
 
 	// voice command
 	val = Info_ValueForKey (cl->userinfo, "cl_voice");

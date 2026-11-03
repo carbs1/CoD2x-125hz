@@ -242,7 +242,8 @@ static void SV_ClientThink_Win32()
 		playerState_t* ps = SV_GetPlayerStateByNum(cl - svs_clients);
 		int stance = sv_debugBotStance->value.integer;
 
-		cmd->buttons &= ~(CAPSULE_BUTTON_PRONE | CAPSULE_BUTTON_CROUCH);
+		if (stance != 0)
+			cmd->buttons &= ~(CAPSULE_BUTTON_PRONE | CAPSULE_BUTTON_CROUCH);
 		if (stance == 1)
 			cmd->buttons |= CAPSULE_BUTTON_CROUCH;
 		else if (stance == 2)

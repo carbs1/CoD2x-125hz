@@ -7,6 +7,7 @@
 #include "../shared/cod2_dvars.h"
 #include "../shared/cod2_cmd.h"
 #include "../shared/animation.h"
+#include "tickrate_history.h"
 
 
 
@@ -104,6 +105,7 @@ static void CL_AdjustTimeDelta()
 
 /** Called only once on game start after common inicialization. Used to initialize variables, cvars, etc. */
 void cgame_init() {
+    tickrate_history_init();
 
     // How far behind the newest snapshot other players are drawn, in ms. Changes nothing up to 40 snaps. 0 = original behavior
     cl_interpDelay = Dvar_RegisterInt("cl_interpDelay", 30, 0, 100, (enum dvarFlags_e)(DVAR_ARCHIVE | DVAR_CHANGEABLE_RESET));
