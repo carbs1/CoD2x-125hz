@@ -4,6 +4,30 @@ cmake_minimum_required(VERSION 3.10)
 
 project(CoD2x LANGUAGES C CXX)
 
+include(CTest)
+if(BUILD_TESTING)
+  add_executable(capsule_trace_test tools/test/capsule_trace_test.cpp
+    src/shared/capsule_trace.cpp src/shared/capsule_models.cpp)
+  add_executable(tickrate_policy_test tools/test/tickrate_policy_test.cpp)
+  add_executable(tickrate_patch_test tools/test/tickrate_patch_test.cpp
+    src/shared/tickrate_patch.cpp src/shared/patch.cpp)
+  add_executable(capsule_hitreg_regression tools/test/capsule_hitreg_regression.cpp
+    src/shared/capsule_models.cpp)
+  target_compile_features(capsule_hitreg_regression PRIVATE cxx_std_17)
+  foreach(test_target capsule_trace_test tickrate_policy_test tickrate_patch_test capsule_hitreg_regression)
+    target_include_directories(${test_target} PRIVATE src/shared)
+    target_compile_features(${test_target} PRIVATE cxx_std_11)
+    # Exercise the same 32-bit x87 math mode as the engine; -msse alone does
+    # not select SSE floating-point arithmetic on x86 GCC.
+    target_compile_options(${test_target} PRIVATE -m32 -msse -O0)
+    set_target_properties(${test_target} PROPERTIES LINK_FLAGS "-m32")
+  endforeach()
+  add_test(NAME capsule_trace COMMAND capsule_trace_test)
+  add_test(NAME tickrate_policy COMMAND tickrate_policy_test)
+  add_test(NAME tickrate_patch COMMAND tickrate_patch_test)
+  add_test(NAME capsule_hitreg_regression COMMAND capsule_hitreg_regression)
+endif()
+
 # symbols_mss32.h / symbols_libcod2x.h are generated build outputs (not committed). Regenerate them from
 # the linked binary (Release, two-pass). GENERATE_SYMBOLS=OFF skips it (e.g. to unblock CI while the
 # toolchain is being sorted) - the build then ships with the placeholder (fewer resolved names, still works).
@@ -154,7 +178,9 @@ if (WIN32)
   if (CMAKE_BUILD_TYPE STREQUAL "Release" AND GENERATE_SYMBOLS)
     # nm: the vendored toolchain when present (local), else nm from PATH (CI). Override with -DMSS32_NM=...
     if (NOT DEFINED MSS32_NM)
-      if (EXISTS "${CMAKE_SOURCE_DIR}/tools/mingw/bin/nm.exe")
+      if (CMAKE_NM)
+        set(MSS32_NM "${CMAKE_NM}")
+      elseif (EXISTS "${CMAKE_SOURCE_DIR}/tools/mingw/bin/nm.exe")
         set(MSS32_NM "${CMAKE_SOURCE_DIR}/tools/mingw/bin/nm.exe")
       else()
         set(MSS32_NM "nm")

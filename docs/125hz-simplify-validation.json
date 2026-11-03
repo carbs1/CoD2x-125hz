@@ -1,0 +1,84 @@
+{
+  "base_commit": "be4f197207101f702dbc2d108d9967fbc62a09a2",
+  "review": {
+    "tool": "Claude Code",
+    "version": "2.1.316",
+    "command": "/simplify",
+    "exit_code": 0,
+    "applied_edits_reviewed_by_invoking_agent": true
+  },
+  "ctest": {
+    "windows32_x87": "4/4 passed",
+    "linux32_x87": "4/4 passed"
+  },
+  "capsules": {
+    "windows32_sse2_O2": "passed",
+    "linux32_sse2_O2": "passed",
+    "primitive_rays_per_mode": 20000,
+    "public_synthetic_pose_model_rays_per_mode": 18000,
+    "edge_assertions_per_mode": 23,
+    "disagreements": 0
+  },
+  "x86": {
+    "configuration_checks": "passed",
+    "accepted_configurations": 18,
+    "adapter_cases": 448,
+    "signed_remainder_cases": 111,
+    "archive_byte_ring_cases": 880,
+    "client_history_boundary_cases": 1026
+  },
+  "compiled_native_turret_replay": {
+    "passed": true,
+    "fixtures": 60,
+    "native_paths": 3
+  },
+  "server_plan_equivalence": {
+    "planners": [
+      "planDelta",
+      "planTurretCountdown",
+      "planArchive"
+    ],
+    "windows_sites": 41,
+    "linux_sites": 40,
+    "equal_addresses_original_signatures_and_replacements": true,
+    "normalized": "Address-dependent rel32 targets; destinations checked as native hook/adapter entry points."
+  },
+  "patch_planner_guards": "Positive/negative/wrapped branches, operand encoding, short branches, zero/oversized widths, out-of-bounds and overflowing offsets pass on both platforms.",
+  "runtime": {
+    "game_launched": false,
+    "live_server_changed": false,
+    "networked_aimed_shot_acceptance": "Still pending; this pass does not replace gameplay validation."
+  },
+  "artifacts": {
+    "mss32.build.dll": {
+      "sha256": "1a0c879cb414f1af0413ecefd919da25548df8ba1cdc09af6dcc90bccbdbd4d4",
+      "bytes": 6235150
+    },
+    "libCoD2x.so": {
+      "sha256": "ce67f03e5c31fc49cd14621b4426ec1c464b88c13b0fb3c362d95e3a5dc045b1",
+      "bytes": 10071564
+    }
+  },
+  "main_integration": {
+    "main_commit": "28f6cfe",
+    "windows32_x87_ctest": "4/4 passed",
+    "linux32_x87_ctest": "4/4 passed",
+    "native_timer_fixtures": 60,
+    "server_plans": {
+      "windows": 41,
+      "linux": 40,
+      "unchanged_after_normalizing_branch_addresses": true
+    },
+    "connected_gameplay_rerun": false,
+    "artifacts": {
+      "mss32.build.dll": {
+        "sha256": "d2917997349a652b8b14ac42480999bdab34a1da60e9cf86130c2c2259871ccb",
+        "bytes": 6478350
+      },
+      "libCoD2x.so": {
+        "sha256": "6abbbfbb8f964ca184b873971d125eaf816bb3bf874793c7a61febd21f64a9e6",
+        "bytes": 11166608
+      }
+    }
+  }
+}
