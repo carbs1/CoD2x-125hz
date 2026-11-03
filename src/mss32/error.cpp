@@ -92,6 +92,10 @@ void error_sendErrorData(const char* message) {
         return;
     #endif
 
+    #if !FORK_TELEMETRY
+        return;
+    #endif
+
     // Gather recent logger entries and the console mirror at the time of the error.
     char loggerBuf[8192] = {0};
     logger_get_recent(loggerBuf, sizeof(loggerBuf));

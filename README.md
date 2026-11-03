@@ -6,6 +6,10 @@ It focuses on fixing bugs and adding new features to the game.
 
 See the [125 Hz timing and capsule implementation notes](docs/125hz-timing-review.md).
 
+This unofficial 125 Hz build differs from the official CoD2x in a few ways:
+- Its servers only accept players with the same 125 Hz build. Set `sv_require125hz 0` to also accept official CoD2x players.
+- Crash and error reports are only saved in the game folder and are never sent to the CoD2x developers. Please report problems in this repository's Issues.
+
 ⚠️ Disclaimer
 - The CoD2x patch is a community-made, unofficial modification for Call of Duty 2.
 - It is provided free of charge, “as is”, without any warranty of functionality or support.
@@ -136,7 +140,7 @@ See the [125 Hz timing and capsule implementation notes](docs/125hz-timing-revie
   - Client max packet value increased from 100 to 125 (`cl_maxpackets 125`)
     - This allows to send exactly 125 packets at 250FPS (instead of ~83.3)
 - Capsule hitboxes
-  - New server cvar `sv_capsuleHitboxes` (default 0): player hits use capsules attached to the skeleton instead of the stock per-bone boxes. 1 = the same capsules for all players, 2 = capsules fitted to the body, head and headgear model of each player, gear on the model does not count as a hit. Models the game does not ship with use the capsules of 1
+  - New server cvar `sv_capsuleHitboxes` (default 2): player hits use capsules attached to the skeleton instead of the stock per-bone boxes. 1 = the same capsules for all players, 2 = capsules fitted to the body, head and headgear model of each player, gear on the model does not count as a hit. Models the game does not ship with use the capsules of 1
   - New server cvar `sv_capsuleHitboxScale` (default 1, range 0.5 - 2): scales the capsule radius
   - Server side only, clients need no update
   - New cvar `sv_capsuleHitboxesDebug` (cheat protected, listen server only, needs `developer 1`): draws the capsules as colored wireframes. 1 = other players, 2 = all players

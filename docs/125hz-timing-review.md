@@ -69,8 +69,9 @@ respect the incoming wall fraction, and hit priorities and the near-equal-radius
 threshold are preserved. Missing mandatory skeleton data keeps the native
 fallback; a handled capsule miss stays a miss.
 
-`sv_capsuleHitboxes` defaults to `0` (stock hitboxes). Use `1` for shared capsule
-shapes or `2` for fitted model shapes when testing this implementation.
+`sv_capsuleHitboxes` defaults to `2` (shapes fitted to each body, head and
+headgear model, so gear on a model is not hittable). Models without fitted data
+use the shared shapes of `1`; `0` restores the stock hitboxes.
 
 Geometry tests use synthetic standing/crouched/prone poses. Actual animated
 model fit, aimed head/torso/limb shots, stance transitions and direction changes

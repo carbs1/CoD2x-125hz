@@ -25,6 +25,14 @@
 #define APP_NAME "CoD2x"
 #define APP_URL "http://cod2x.me/"
 
+// Unofficial 125 Hz fork
+#define FORK_URL "https://github.com/carbs1/CoD2x-125hz/releases"
+// Clients and servers of this fork must have the same number. Increase it when a change needs both updated
+#define FORK_PROTOCOL 1
+// Crash and error reports are only saved on this computer. The official CoD2x developers don't maintain this build,
+// so its reports must not reach their telemetry server
+#define FORK_TELEMETRY 0
+
 
 // Original servers
 #define SERVER_ACTIVISION_AUTHORIZE_URI "cod2master.activision.com"

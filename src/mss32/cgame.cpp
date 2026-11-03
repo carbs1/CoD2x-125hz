@@ -114,6 +114,9 @@ void cgame_init() {
 
     // Register USERINFO cvar that is automatically appended to the client's userinfo string sent to the server
     Dvar_RegisterInt("protocol_cod2x", APP_VERSION_PROTOCOL, APP_VERSION_PROTOCOL, APP_VERSION_PROTOCOL, (enum dvarFlags_e)(DVAR_USERINFO | DVAR_ROM));
+
+    // 125 Hz fork: lets servers of this fork reject players without it
+    Dvar_RegisterInt("protocol_125hz", FORK_PROTOCOL, FORK_PROTOCOL, FORK_PROTOCOL, (enum dvarFlags_e)(DVAR_USERINFO | DVAR_ROM));
     
     // Add another mode to thirdperson
     cg_thirdPersonMode = Dvar_RegisterInt("cg_thirdPersonMode", 0, 0, 1, (enum dvarFlags_e)(DVAR_CHEAT | DVAR_CHANGEABLE_RESET));

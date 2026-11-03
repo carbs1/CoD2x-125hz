@@ -734,7 +734,9 @@ static void exception_handler(int sig, siginfo_t* info, void* ucontextRaw) {
     // Build the rich JSON report and queue it for delivery. It is sent later by exception_resendPending()
     // on the next server start - we never run HTTP/OpenSSL inside the crashing process.
     exception_buildJson(sig, info, (ucontext_t*)ucontextRaw, path);
-    exception_writePending(path);
+    #if FORK_TELEMETRY
+        exception_writePending(path);
+    #endif
 
     // Default action (core dump / exit with the signal)
     signal(sig, SIG_DFL);
@@ -956,6 +958,9 @@ void exception_init() {
         }).detach();
         return; // do NOT send the pending queue in test mode - test crashes must not reach production
     }
+#endif
+#if !FORK_TELEMETRY
+    return; // reports queued by an official CoD2x install stay queued for it
 #endif
     std::thread([]() {
         // Give the server a moment to finish starting before using the network.

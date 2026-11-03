@@ -262,8 +262,13 @@ static void exception_updateTelemetryLabel(HWND hwnd, CrashDialogData* data) {
                 g_crashTelemetryError[0] ? g_crashTelemetryError : "unknown error");
             break;
         default:
-            snprintf(status, sizeof(status),
-                "Crash report will be sent to CoD2x developers for analysis.");
+            #if FORK_TELEMETRY
+                snprintf(status, sizeof(status),
+                    "Crash report will be sent to CoD2x developers for analysis.");
+            #else
+                snprintf(status, sizeof(status),
+                    "This is the unofficial 125 Hz build. The crash report was only saved on this computer.\nPlease report it at " FORK_URL " (Issues), not to the CoD2x developers.");
+            #endif
             break;
     }
 
@@ -2787,6 +2792,11 @@ static bool exception_isPermanentHttpFailure(int status) {
 
 // Sends one report synchronously. Deletes pendingPath when the report was delivered or permanently rejected.
 static bool exception_sendReportSync(const std::string& json, const char* pendingPath, int maxWaitMs) {
+    #if !FORK_TELEMETRY
+        // Reports queued by an official CoD2x install stay queued for it
+        return false;
+    #endif
+
     struct Result { bool done = false; bool ok = false; bool permanent = false; } result;
 
     HttpClient client;
@@ -3576,7 +3586,7 @@ static LONG exception_handleCrash(EXCEPTION_POINTERS* pExceptionInfo, DWORD cras
     // Telemetry is sent for real crashes and for self-test crashes alike (self-test reports carry
     // crashInfo.test and the backend acks them without storing). Only real crashes are queued offline.
     exception_stage = "telemetry";
-    #if !DEBUG || EXCEPTION_TEST
+    #if (!DEBUG || EXCEPTION_TEST) && FORK_TELEMETRY
       {
         static HttpClient httpClient;
         static char pendingPathForCallback[MAX_PATH * 2];
@@ -3879,7 +3889,7 @@ void exception_reportFreeze(const char* reason, DWORD frozenMs) {
     exception_writeFile(txtPath, text.c_str(), text.size(), false);
     logger_add("Freeze report saved to %s", txtPath);
 
-    #if !DEBUG
+    #if !DEBUG && FORK_TELEMETRY
         exception_writeFile(pendingPath, json.c_str(), json.size(), false);
         exception_sendReportSync(json, pendingPath, 7000);
     #endif

@@ -35,6 +35,7 @@ extern dvar_t* sv_minRate;
 dvar_t*		sv_master[MAX_MASTER_SERVERS];
 netaddr_s	masterServerAddr[MAX_MASTER_SERVERS] = { {}, {}, {} };
 dvar_t*		sv_cracked;
+dvar_t*		sv_require125hz;
 dvar_t*		sv_rateLimiter;
 dvar_t*     sv_rateLimiterRequestCount; // exposed dvar reflecting current request count in last second
 dvar_t*     sv_rateLimiterUniqueIPCount; // exposed dvar reflecting current unique IP count in last second
@@ -476,6 +477,17 @@ void SV_DirectConnect(netaddr_s addr)
         Com_DPrintf("    rejected connect from CoD2x version %i (should be %i)\n", cod2xNum, APP_VERSION_PROTOCOL);
         return;
     }
+
+    // 125 Hz fork: players need the same build of this fork, the official CoD2x lacks its snapshot history and limits
+    int32_t forkNum = atol(Info_ValueForKey(str, "protocol_125hz"));
+    if (sv_require125hz->value.boolean && forkNum != FORK_PROTOCOL) {
+        NET_OutOfBandPrint(NS_SERVER, addr, va(
+            "error\nEXE_SERVER_IS_DIFFERENT_VER\x15%s\n\x00",
+            APP_VERSION "\n\n" "This server needs the unofficial CoD2x 125 Hz build " TOSTRING(FORK_PROTOCOL) ".\nDownload it at:\n" FORK_URL));
+        Com_DPrintf("    rejected connect from 125 Hz build %i (should be %i)\n", forkNum, FORK_PROTOCOL);
+        return;
+    }
+    // 125 Hz fork: End
 
 
 	// Require HWID2
@@ -1355,6 +1367,9 @@ void server_init()
 	sv_master[2] = Dvar_RegisterString("sv_master3", "", 							(dvarFlags_e)(DVAR_CHANGEABLE_RESET));
 
 	sv_cracked = Dvar_RegisterBool("sv_cracked", false, (dvarFlags_e)(DVAR_CHANGEABLE_RESET));
+
+	// 125 Hz fork: reject players without the same build of this fork
+	sv_require125hz = Dvar_RegisterBool("sv_require125hz", true, (dvarFlags_e)(DVAR_CHANGEABLE_RESET));
 
 	capsule_hitboxes_init();
 

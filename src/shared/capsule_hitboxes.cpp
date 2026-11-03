@@ -324,7 +324,7 @@ void capsule_hitboxes_frame()
 
 void capsule_hitboxes_init()
 {
-	sv_capsuleHitboxes = Dvar_RegisterInt("sv_capsuleHitboxes", 0, 0, 2, (dvarFlags_e)(DVAR_CHANGEABLE_RESET));
+	sv_capsuleHitboxes = Dvar_RegisterInt("sv_capsuleHitboxes", 2, 0, 2, (dvarFlags_e)(DVAR_CHANGEABLE_RESET));
 	sv_capsuleHitboxScale = Dvar_RegisterFloat("sv_capsuleHitboxScale", 1.0f, 0.5f, 2.0f, (dvarFlags_e)(DVAR_CHANGEABLE_RESET));
 #if COD2X_WIN32
 	sv_capsuleHitboxesDebug = Dvar_RegisterInt("sv_capsuleHitboxesDebug", 0, 0, 2, (dvarFlags_e)(DVAR_CHANGEABLE_RESET | DVAR_CHEAT));
