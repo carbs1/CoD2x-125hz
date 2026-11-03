@@ -8,6 +8,8 @@
 #include "cod2_entity.h"
 #include "cod2_cmd.h"
 #include "tickrate_patch.h"
+#include "tickrate_wait.h"
+#include "cod2_file.h"
 
 
 // Server frame rate above the original 20.
@@ -19,9 +21,11 @@ dvar_t* sv_minSnaps;
 dvar_t* sv_minRate;
 dvar_t* sv_realtimeWait;
 
-// Script wait is counted in server frames, by default 20 per second of wait no matter what sv_fps is.
-// Mods like zPAM correct for that on their own (level.fps_multiplier), so this must stay optional.
-static float tickrate_waitFramesPerSecond = 20.0f;
+// 0 preserves the native clock for compensating mods; 1 uses real time;
+// 2 chooses between them from the active gametype source before scripts run.
+static bool modWaitCompensation = true;
+static bool effectiveRealtimeWait = false;
+static dvar_t* sv_realtimeWait_active;
 
 // How fast a dropped item moved since the last frame, G_RunItem uses the same frame time for the client's trajectory
 static float tickrate_itemVelocityScale = 20.0f;
@@ -41,6 +45,12 @@ static void historyCommand()
 	for (int i = 0; i < sv_maxclients->value.integer; ++i) {
 		if (svs_clients[i].state >= CS_CONNECTED) tickrate::printDeltaStats(i);
 	}
+}
+
+static void clockCommand()
+{
+	Com_Printf("TICKRATE_CLOCK mode=%d realtime=%d frame_ms=%d mod_compensation=%d\n",
+		sv_realtimeWait->value.integer,effectiveRealtimeWait,tickrate::frameMsec,modWaitCompensation);
 }
 
 // Only the manned path runs every world frame. The idle turret sound path
@@ -87,7 +97,6 @@ static dvar_t* tickrate_getFps()
 // Values in the game's code that depend on the frame time
 static void tickrate_apply(int msec, bool realtimeWait)
 {
-	const int frames = 1000 / msec;
 
 	// G_RunItem: BG_EvaluateTrajectory(&ent->s.pos, level.time + 50, origin)
 	patch_byte(ADDR(0x00520844 + 2, 0x08107eab + 2), (uint8_t)msec);
@@ -102,14 +111,12 @@ static void tickrate_apply(int msec, bool realtimeWait)
 		patch_float(0x081080de + 1, tickrate_itemVelocityScale);
 	#endif
 
-	// VM_Execute: wait, whole seconds and fractions
-	const int waitFrames = realtimeWait ? frames : 20;
-	tickrate_waitFramesPerSecond = (float)waitFrames;
-	patch_int32(ADDR(0x0047e8a8 + 2, 0x08080f30 + 2), waitFrames);
+	tickrate::configureScriptWaits(msec,realtimeWait);
+	effectiveRealtimeWait = realtimeWait;
+	if (sv_realtimeWait_active) Dvar_SetBool(sv_realtimeWait_active,realtimeWait);
 }
 
-// Called at the start of every server frame
-void tickrate_frame()
+static void updateClock()
 {
 	static int lastMsec = 50;
 	static bool lastRealtimeWait = false;
@@ -118,7 +125,7 @@ void tickrate_frame()
 	if (sv_fps && sv_fps->value.integer > 0)
 	{
 		const int msec = 1000 / sv_fps->value.integer;
-		const bool realtimeWait = sv_realtimeWait->value.boolean;
+		const bool realtimeWait = tickrate::realtimeWaitMode(sv_realtimeWait->value.integer,modWaitCompensation);
 		if (msec > 0 && (msec != lastMsec || realtimeWait != lastRealtimeWait))
 		{
 			lastMsec = msec;
@@ -126,6 +133,25 @@ void tickrate_frame()
 			tickrate_apply(msec, realtimeWait);
 		}
 	}
+}
+
+// Called before the native gametype loader executes any of its script entry points.
+void tickrate_scripts_load()
+{
+	void* source = nullptr;
+	const char* type = Dvar_GetString("g_gametype");
+	const int length = FS_ReadFile(va("maps/mp/gametypes/%s.gsc",type),&source);
+	modWaitCompensation = tickrate::modCompensatesWaits(length > 0 ? static_cast<const char*>(source) : nullptr);
+	if (source) FS_FreeFile(source);
+	tickrate::resetScriptWaits();
+	updateClock();
+	clockCommand();
+}
+
+// Called at the start of every server frame.
+void tickrate_frame()
+{
+	updateClock();
 
 	// The limits are applied when the client's settings change, so apply them to the connected clients too
 	if (sv_minSnaps->modified || sv_minRate->modified)
@@ -148,6 +174,7 @@ void tickrate_init()
 		std::vector<tickrate::Patch> plan;
 		bool valid = tickrate::planDelta(plan);
 		valid = tickrate::planTurretCountdown(plan) && valid;
+		valid = tickrate::planScriptWaits(plan) && valid;
 		tickrate::planArchive(plan);
 #if COD2X_WIN32
 		tickrate::redirect(plan, 0x0051ca35, "mounted turret sound clock", {0xe9,0xa6,0xfe,0xff,0xff},
@@ -171,25 +198,16 @@ void tickrate_init()
 	sv_minSnaps = Dvar_RegisterInt("sv_minSnaps", 0, 0, 125, (dvarFlags_e)(DVAR_CHANGEABLE_RESET));
 	sv_minRate = Dvar_RegisterInt("sv_minRate", 0, 0, 100000, (dvarFlags_e)(DVAR_CHANGEABLE_RESET));
 
-	sv_realtimeWait = Dvar_RegisterBool("sv_realtimeWait", false, (dvarFlags_e)(DVAR_CHANGEABLE_RESET));
+	sv_realtimeWait = Dvar_RegisterInt("sv_realtimeWait",2,0,2,(dvarFlags_e)(DVAR_CHANGEABLE_RESET));
+	sv_realtimeWait_active = Dvar_RegisterBool("sv_realtimeWait_active",false,DVAR_ROM);
 	Cmd_AddCommand("tickrate_history", historyCommand);
+	Cmd_AddCommand("tickrate_clock",clockCommand);
 }
 
 void tickrate_patch()
 {
 	// Cvar sv_maxRate max value change from 25000 to 100000, at 125 snaps 25000 is only 200 bytes per snapshot
 	patch_int32(ADDR(0x004598c3 + 1, 0x08093c1d + 4), 100000);
-
-	// VM_Execute: wait, fractions of a second. Originally 20.0, the constant is shared with other code.
-	patch_int32(ADDR(0x0047e864 + 2, 0x08080eee + 2), (int32_t)&tickrate_waitFramesPerSecond);
-
-	// VM_Execute: wait, whole seconds. Originally multiplied by 20 with shifts, imul eax, [reg], 20 has room for other values.
-	#if COD2X_WIN32
-		patch_copy(0x0047e8a8, (void*)"\x69\x07\x14\x00\x00\x00\x90\x90", 8);
-	#endif
-	#if COD2X_LINUX
-		patch_copy(0x08080f30, (void*)"\x69\x00\x14\x00\x00\x00\x90\x90\x90\x90\x90\x90", 12);
-	#endif
 
 	#if COD2X_WIN32
 		// G_RunItem: VectorScale(delta, 20.0, ent->s.pos.trDelta), inlined

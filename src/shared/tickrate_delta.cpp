@@ -10,11 +10,6 @@
 #include <new>
 #include <cstdlib>
 #include <utility>
-#if COD2X_WIN32
-#include <windows.h>
-#else
-#include <sys/mman.h>
-#endif
 
 namespace tickrate {
 namespace {
@@ -29,7 +24,6 @@ struct ClientEpoch { bool valid = false; int connected = 0; int challenge = 0; }
 ClientEpoch epochs[MAX_CLIENTS];
 struct DeltaStats { unsigned int full = 0; unsigned int delta = 0; unsigned int compatibility = 0; int lastAge = 0; int maxAge = 0; };
 DeltaStats statistics[MAX_CLIENTS];
-std::vector<void*> codePages;
 bool allocationOkay = true;
 __attribute__((force_align_arg_pointer))
 uintptr_t turretCountdown(void* turret, int) {
@@ -156,29 +150,8 @@ void* offsetThunk(int sequenceReg, int clientReg, int outputReg,
         allocationOkay = false;
         return nullptr;
     }
-#if COD2X_WIN32
-    void* page = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    if (page) {
-        memcpy(page, bytes.data(), bytes.size());
-        DWORD old;
-        if (!VirtualProtect(page, 4096, PAGE_EXECUTE_READ, &old)) {
-            VirtualFree(page, 0, MEM_RELEASE);
-            page = nullptr;
-        } else FlushInstructionCache(GetCurrentProcess(), page, bytes.size());
-    }
-#else
-    void* page = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (page == MAP_FAILED) page = nullptr;
-    if (page) {
-        memcpy(page, bytes.data(), bytes.size());
-        if (mprotect(page, 4096, PROT_READ | PROT_EXEC)) {
-            munmap(page, 4096);
-            page = nullptr;
-        }
-    }
-#endif
+    void* page = executableCode(bytes);
     if (!page) allocationOkay = false;
-    else codePages.push_back(page);
     return page;
 }
 
@@ -264,13 +237,6 @@ void printDeltaStats(int client) {
 
 void releaseDelta() {
     std::vector<clientSnapshot_t>().swap(history);
-    for (auto page : codePages) {
-#if COD2X_WIN32
-        VirtualFree(page,0,MEM_RELEASE);
-#else
-        munmap(page,4096);
-#endif
-    }
-    codePages.clear();
+    releaseExecutableCode();
 }
 } // namespace tickrate

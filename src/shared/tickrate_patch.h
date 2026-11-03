@@ -26,6 +26,8 @@ bool verifyPatches(const std::vector<Patch>& patches);
 void applyPatches(const std::vector<Patch>& patches);
 // False once applyPatches has pointed native code at this module's storage or code.
 bool canReload();
+void* executableCode(const std::vector<unsigned char>& bytes);
+void releaseExecutableCode();
 
 bool planDelta(std::vector<Patch>& patches);
 bool planTurretCountdown(std::vector<Patch>& patches);

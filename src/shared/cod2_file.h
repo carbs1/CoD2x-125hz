@@ -39,10 +39,8 @@ inline int FS_FileExists(const char *filename)
     return ret;
 }
 
-inline bool FS_FreeFile(void* buffer) {
-    int ret;
-    ASM_CALL(RETURN(ret), ADDR(0x004232f0, 0x0809ece0), 1, PUSH(buffer));
-    return ret;
+inline void FS_FreeFile(void* buffer) {
+    ASM_CALL(RETURN_VOID, ADDR(0x004232f0, 0x080a0b8a), 1, PUSH(buffer));
 }
 
 inline int FS_FilenameCompare(const char *s1, const char *s2)

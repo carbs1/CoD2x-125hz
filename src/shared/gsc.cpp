@@ -15,6 +15,7 @@
 #include "server.h"
 #include "match.h"
 #include "http_client.h"
+#include "tickrate.h"
 
 
 
@@ -184,6 +185,7 @@ void CodeCallback_StartGameType_Linux() {
 
 // Loading callback handles from scripts
 void GScr_LoadGameTypeScript() {
+	tickrate_scripts_load();
 	// Load original callbacks
 	ASM_CALL(RETURN_VOID, ADDR(0x00503f90, 0x08110286), 0);
 

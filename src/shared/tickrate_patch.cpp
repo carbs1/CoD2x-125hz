@@ -3,9 +3,15 @@
 #include "cod2_common.h"
 #include <cstring>
 #include <utility>
+#if COD2X_WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 namespace tickrate {
 namespace {
 bool relocated = false;
+std::vector<void*> codePages;
 }
 
 void redirect(std::vector<Patch>& patches, unsigned int address, const char* name,
@@ -59,4 +65,39 @@ void applyPatches(const std::vector<Patch>& patches) {
 }
 
 bool canReload() { return !relocated; }
+
+void* executableCode(const std::vector<unsigned char>& bytes) {
+    if (bytes.empty() || bytes.size() > 4096) return nullptr;
+#if COD2X_WIN32
+    void* page = VirtualAlloc(nullptr,4096,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);
+    if (!page) return nullptr;
+    memcpy(page,bytes.data(),bytes.size());
+    DWORD old;
+    if (!VirtualProtect(page,4096,PAGE_EXECUTE_READ,&old)) {
+        VirtualFree(page,0,MEM_RELEASE); return nullptr;
+    }
+    FlushInstructionCache(GetCurrentProcess(),page,bytes.size());
+#else
+    void* page = mmap(nullptr,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+    if (page == MAP_FAILED) return nullptr;
+    memcpy(page,bytes.data(),bytes.size());
+    if (mprotect(page,4096,PROT_READ|PROT_EXEC)) {
+        munmap(page,4096); return nullptr;
+    }
+#endif
+    codePages.push_back(page);
+    return page;
+}
+
+void releaseExecutableCode() {
+    if (!canReload()) return; // installed native callers retain these addresses
+    for (auto page : codePages) {
+#if COD2X_WIN32
+        VirtualFree(page,0,MEM_RELEASE);
+#else
+        munmap(page,4096);
+#endif
+    }
+    codePages.clear();
+}
 }

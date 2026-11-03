@@ -9,12 +9,13 @@ if(BUILD_TESTING)
   add_executable(capsule_trace_test tools/test/capsule_trace_test.cpp
     src/shared/capsule_trace.cpp src/shared/capsule_models.cpp)
   add_executable(tickrate_policy_test tools/test/tickrate_policy_test.cpp)
+  add_executable(tickrate_wait_test tools/test/tickrate_wait_test.cpp)
   add_executable(tickrate_patch_test tools/test/tickrate_patch_test.cpp
     src/shared/tickrate_patch.cpp src/shared/patch.cpp)
   add_executable(capsule_hitreg_regression tools/test/capsule_hitreg_regression.cpp
     src/shared/capsule_models.cpp)
   target_compile_features(capsule_hitreg_regression PRIVATE cxx_std_17)
-  foreach(test_target capsule_trace_test tickrate_policy_test tickrate_patch_test capsule_hitreg_regression)
+  foreach(test_target capsule_trace_test tickrate_policy_test tickrate_wait_test tickrate_patch_test capsule_hitreg_regression)
     target_include_directories(${test_target} PRIVATE src/shared)
     target_compile_features(${test_target} PRIVATE cxx_std_11)
     # Exercise the same 32-bit x87 math mode as the engine; -msse alone does
@@ -24,6 +25,7 @@ if(BUILD_TESTING)
   endforeach()
   add_test(NAME capsule_trace COMMAND capsule_trace_test)
   add_test(NAME tickrate_policy COMMAND tickrate_policy_test)
+  add_test(NAME tickrate_wait COMMAND tickrate_wait_test)
   add_test(NAME tickrate_patch COMMAND tickrate_patch_test)
   add_test(NAME capsule_hitreg_regression COMMAND capsule_hitreg_regression)
 endif()
