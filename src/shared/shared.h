@@ -26,7 +26,15 @@
 #define APP_URL "http://cod2x.me/"
 
 // Unofficial 125 Hz fork
-#define FORK_URL "https://github.com/carbs1/CoD2x-125hz/releases"
+#define FORK_REPO_URL "https://github.com/carbs1/CoD2x-125hz"
+#define FORK_URL FORK_REPO_URL "/releases"
+// Version suffix of this fork's releases, e.g. 1.4.6.9-125hz.2 is build 2. Releases are published by pushing the tag
+// v<version>, which builds them on GitHub and attaches update.json for the auto-updater
+#define FORK_VERSION_TAG "-125hz."
+#ifndef FORK_UPDATE_URL // tests point it at a local server
+    #define FORK_UPDATE_URL FORK_REPO_URL "/releases/latest/download/update.json"
+#endif
+#define FORK_DOWNLOAD_URL FORK_REPO_URL "/releases/download/"
 // Clients and servers of this fork must have the same number. Increase it when a change needs both updated
 #define FORK_PROTOCOL 1
 // Crash and error reports are only saved on this computer. The official CoD2x developers don't maintain this build,

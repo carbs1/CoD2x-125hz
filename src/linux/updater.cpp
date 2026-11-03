@@ -17,12 +17,10 @@
 #include "../shared/updater_https.h"
 
 
-struct netaddr_s updater_address;
-
 dvar_t* sv_update;
 
 
-void download_and_swap_async(const char *current_version, const char *new_version, const char *url) {
+void download_and_swap_async(const char *current_version, const char *new_version, const char *url, const char *sha256) {
     
     char libCoD2x_new[512], libCoD2x_old[512], libCoD2x_log[512], cmd[2048];
 
@@ -44,6 +42,7 @@ void download_and_swap_async(const char *current_version, const char *new_versio
     off += snprintf(cmd + off, sizeof(cmd) - off, "echo \"Destination:     %s\"; ", libCoD2x_new);
     off += snprintf(cmd + off, sizeof(cmd) - off, "rm -f \"%s\"; ", libCoD2x_old); // Remove old backup
     off += snprintf(cmd + off, sizeof(cmd) - off, "curl --connect-timeout 2 --max-time 8 --retry 3 --retry-delay 2 -o \"%s\" -L -s -S -f -w \"Downloaded: %%{size_download} bytes at %%{speed_download} bytes/sec in %%{time_total} seconds\\n\" \"%s\"; ", libCoD2x_new, url);
+    off += snprintf(cmd + off, sizeof(cmd) - off, "echo \"%s  %s\" | sha256sum -c - || { rm -f \"%s\"; exit 1; }; ", sha256, libCoD2x_new, libCoD2x_new); // 125 Hz fork: install only the file listed in update.json
     off += snprintf(cmd + off, sizeof(cmd) - off, "mv -f \"%s\" \"%s\"; ", LIB_PATH, libCoD2x_old); // Move current lib to .old
     off += snprintf(cmd + off, sizeof(cmd) - off, "mv -f \"%s\" \"%s\"; ", libCoD2x_new, LIB_PATH); // Replace with new lib
     off += snprintf(cmd + off, sizeof(cmd) - off, "echo \"==========================================================================================\"; ");
@@ -58,69 +57,27 @@ void download_and_swap_async(const char *current_version, const char *new_versio
 }
 
 
-void updater_downloadFile(const char* updateFile, const char* newVersionString) {
+void updater_downloadFile(const char* updateFile, const char* newVersionString, const char* sha256) {
     Com_Printf("Downloading file '%s' in background.\n", updateFile);
     Com_Printf("New version will be loaded after application restart.\n");
 
-    download_and_swap_async(APP_VERSION, newVersionString, updateFile);
+    download_and_swap_async(APP_VERSION, newVersionString, updateFile, sha256);
 }
 
 
 
 
-// Sends the HTTPS update check (runs on a background thread). A dedicated server has no HWID/install id.
-// If it fails, the UDP request is sent as a fallback.
+// Starts the update check against this fork's GitHub releases (runs on a background thread)
 static void updater_sendHttpsRequest() {
-    UpdaterHttpsRequest request;
-    request.type = "server";
-
-    if (updater_https_checkForUpdate(request)) {
+    if (updater_https_checkForUpdate()) {
         Com_Printf("Checking for updates...\n");
     }
 }
 
-bool updater_sendRequest() {
-    Com_DPrintf("Resolving AutoUpdate Server %s...\n", SERVER_UPDATE_URI);
-    if (!NET_StringToAdr(SERVER_UPDATE_URI, &updater_address))
-    {
-        Com_Printf("\nFailed to resolve AutoUpdate server %s.\n", SERVER_UPDATE_URI);
-        return 0;
-    }
-
-    updater_address.port = BigShort(SERVER_UPDATE_PORT); // Swap the port bytes
-
-    Com_DPrintf("AutoUpdate resolved to %s\n", NET_AdrToString(updater_address));
-
-    Com_Printf("Checking for updates...\n");
-
-    // Send the request to the Auto-Update server
-    const char* udpPayload = "getUpdateInfo2 \"CoD2x MP\" \"" APP_VERSION "\" \"linux-i386\" \"server\"";
-
-    bool status = NET_OutOfBandPrint(NS_CLIENT, updater_address, udpPayload);
-
-    Com_Printf("-----------------------------------\n");
-
-    return status;
-}
-
-static void updater_processResponse(int updateAvailable, const char* updateFile, const char* newVersionString);
-
 void updater_updatePacketResponse(struct netaddr_s addr)
 {
-    if (updater_address.type == NA_BAD) {
-        Com_DPrintf("Auto-Updater has bad address\n");
-        return;
-    }
-
-    Com_DPrintf("Auto-Updater response from %s\n", NET_AdrToString(addr));
-    
-    if (NET_CompareBaseAdrSigned(&updater_address, &addr))
-    {
-        Com_DPrintf("Received update packet from unexpected IP.\n");
-        return;
-    }
-
-    updater_processResponse(atol(Cmd_Argv(1)), Cmd_Argv(2), Cmd_Argv(3));
+    // 125 Hz fork: updates come only from this fork's GitHub releases, UDP update packets are ignored
+    Com_DPrintf("Auto-Updater: ignored UDP update packet from %s\n", NET_AdrToString(addr));
 }
 
 // True if the string contains only characters that are safe inside the download shell command
@@ -135,17 +92,17 @@ static bool updater_isSafeShellArg(const char* s) {
     return true;
 }
 
-// Process the update check response (from UDP or HTTPS)
-static void updater_processResponse(int updateAvailable, const char* updateFile, const char* newVersionString)
+// Process the update check result
+static void updater_processResponse(int updateAvailable, const char* updateFile, const char* newVersionString, const char* sha256)
 {
     Com_Printf("-----------------------------------\n");
 
     if (updateAvailable) {
         Com_Printf("CoD2x: Update available: %s -> %s\n", APP_VERSION, newVersionString);
 
-        // URL and version are placed into a shell command, so allow only safe characters
-        if (updater_isSafeShellArg(updateFile) && updater_isSafeShellArg(newVersionString))
-            updater_downloadFile(updateFile, newVersionString);
+        // URL, version and hash are placed into a shell command, so allow only safe characters
+        if (updater_isSafeShellArg(updateFile) && updater_isSafeShellArg(newVersionString) && updater_isSafeShellArg(sha256))
+            updater_downloadFile(updateFile, newVersionString, sha256);
         else
             Com_Printf("CoD2x: Invalid update URL or version, update skipped.\n");
 
@@ -162,15 +119,12 @@ static void updater_processResponse(int updateAvailable, const char* updateFile,
 static void updater_processHttpsResult(const UpdaterHttpsResult& result)
 {
     if (result.ok) {
-        updater_processResponse(result.available, result.url.c_str(), result.version.c_str());
+        updater_processResponse(result.available, result.url.c_str(), result.version.c_str(), result.sha256.c_str());
         return;
     }
 
+    // 125 Hz fork: no fallback to the official update server
     Com_Printf("CoD2x: Failed to check for updates: %s\n", result.error.c_str());
-
-    // Fallback to the legacy UDP request (the master server logs UDP requests from new versions as HTTPS failures)
-    Com_Printf("Trying UDP...\n");
-    updater_sendRequest();
 }
 
 

@@ -32,7 +32,8 @@ VERSION_PROTOCOL = 6
 VERSION_PATCH = 9
 
 # CoD2x test version (e.g. -test.1)
-VERSION_TEST = -test.1
+# 125 Hz fork: -125hz.<build>, increase the build for every release (the auto-updater compares it, see FORK_VERSION_TAG)
+VERSION_TEST = -125hz.2
 VERSION_IS_TEST = 1
 
 # Full version string

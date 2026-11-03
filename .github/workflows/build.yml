@@ -119,6 +119,23 @@ jobs:
           cp "dist/CoD2x-${{ inputs.version }}-linux/libCoD2x.so" bin/linux/libCoD2x.so
           bash .github/scripts/package.sh windows "${{ inputs.version }}"
           bash .github/scripts/package.sh linux "${{ inputs.version }}"
+      - name: Generate update.json for the auto-updater (125 Hz builds)
+        # Clients read releases/latest/download/update.json and install a newer build only if its SHA-256 matches.
+        # A different FORK_PROTOCOL makes the update required, because servers of the new build reject the old one.
+        run: |
+          set -eu
+          VERSION="${{ inputs.version }}"
+          case "$VERSION" in *-125hz.*) ;; *) echo "Not a 125 Hz build, no update.json"; exit 0 ;; esac
+          BUILD="${VERSION##*-125hz.}"
+          case "$BUILD" in ''|*[!0-9]*) echo "::error::invalid build number in $VERSION"; exit 1 ;; esac
+          PROTOCOL="$(sed -n 's/^#define FORK_PROTOCOL \([0-9][0-9]*\).*/\1/p' src/shared/shared.h)"
+          [ -n "$PROTOCOL" ] || { echo "::error::FORK_PROTOCOL not found in src/shared/shared.h"; exit 1; }
+          BASE="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}"
+          WIN_SHA="$(sha256sum out/mss32.dll | cut -d' ' -f1)"
+          LINUX_SHA="$(sha256sum out/libCoD2x.so | cut -d' ' -f1)"
+          printf '{"build":%s,"protocol":%s,"version":"%s",\n "windows":{"url":"%s/mss32.dll","sha256":"%s"},\n "linux":{"url":"%s/libCoD2x.so","sha256":"%s"}}\n' \
+            "$BUILD" "$PROTOCOL" "$VERSION" "$BASE" "$WIN_SHA" "$BASE" "$LINUX_SHA" > out/update.json
+          cat out/update.json
       - name: Generate release notes
         run: |
           PREV="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
@@ -132,6 +149,8 @@ jobs:
         id: pre
         run: |
           case "${{ inputs.version }}" in
+            # 125 Hz builds are full releases, so releases/latest (read by the auto-updater) points at them
+            *-125hz.*) echo "value=false" >> "$GITHUB_OUTPUT" ;;
             *-*) echo "value=true"  >> "$GITHUB_OUTPUT" ;;
             *)   echo "value=false" >> "$GITHUB_OUTPUT" ;;
           esac
@@ -146,3 +165,4 @@ jobs:
             out/CoD2x_*.zip
             out/mss32.dll
             out/libCoD2x.so
+            out/update.json

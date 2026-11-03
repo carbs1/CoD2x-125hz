@@ -9,6 +9,8 @@ See the [125 Hz timing and capsule implementation notes](docs/125hz-timing-revie
 This unofficial 125 Hz build differs from the official CoD2x in a few ways:
 - Its servers only accept players with the same 125 Hz build. Set `sv_require125hz 0` to also accept official CoD2x players.
 - Crash and error reports are only saved in the game folder and are never sent to the CoD2x developers. Please report problems in this repository's Issues.
+- The auto-updater installs newer 125 Hz builds from this repository's latest release, never the official CoD2x. It reads `update.json` from that release, sends nothing about the player, and installs a file only if its SHA-256 matches. An update is required when the new build changes `FORK_PROTOCOL`, because its servers reject older builds. Builds from CI (`-dev.`, `-pr.` versions) don't update themselves. Dedicated servers update unless `sv_update 0`.
+- To release build N: set `VERSION_TEST = -125hz.N` in the makefile (N must be higher than the last release), commit it with the regenerated `src/shared/version.h` and `src/mss32/version.rc`, then push the tag `v<version>`, e.g. `git tag v1.4.6.9-125hz.2 && git push origin v1.4.6.9-125hz.2`. GitHub builds the release, marks it as the latest release and attaches `update.json`.
 
 ⚠️ Disclaimer
 - The CoD2x patch is a community-made, unofficial modification for Call of Duty 2.

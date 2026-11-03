@@ -2,9 +2,10 @@
 
 #include <windows.h>
 #include <wininet.h>
+#include <openssl/evp.h>
+#include <string>
 
 #include "shared.h"
-#include "hwid.h"
 #include "system.h"
 #include "../shared/cod2_dvars.h"
 #include "../shared/cod2_client.h"
@@ -28,21 +29,43 @@ bool                updater_waitingForResponse = false;
 int                 updater_waitingForResponseRepeats = 0;
 DWORD               updater_waitingForResponseTime = 0;
 bool                updater_forcedUpdate = false;
-struct netaddr_s    updater_address = { NA_INIT, {0}, 0, {0} };
+std::string         updater_expectedSha256; // SHA-256 of the file in cl_updateFiles, from update.json
 dvar_t*             sv_update;
-
-extern dvar_t *cl_hwid;
-extern dvar_t *cl_hwid2;
-extern char hwid_old[33];  
-extern char hwid_regid[33];
-extern char hwid_changed_diff[1024];
-extern int hwid_changed_count;
-
-static void updater_processResponse(int updateAvailable, const char* updateFile, const char* newVersionString);
 
 
 void updater_showForceUpdateDialog() {
-    Com_Error(ERR_DROP, "Update required\n\nA new version of CoD2x must be installed.\nPlease update to version %s.\n", cl_updateVersion->value.string);
+    Com_Error(ERR_DROP, "Update required\n\nA new version of the CoD2x 125 Hz build must be installed.\nPlease update to version %s.\n", cl_updateVersion->value.string);
+}
+
+// Lowercase hex SHA-256 of a file
+static bool updater_fileSha256(const char* path, std::string& out) {
+    HANDLE hFile = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE)
+        return false;
+
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    bool ok = ctx && EVP_DigestInit_ex(ctx, EVP_sha256(), NULL);
+
+    char buffer[4096];
+    DWORD bytesRead;
+    while (ok && ReadFile(hFile, buffer, sizeof(buffer), &bytesRead, NULL) && bytesRead > 0)
+        ok = EVP_DigestUpdate(ctx, buffer, bytesRead);
+
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int digestLen = 0;
+    ok = ok && EVP_DigestFinal_ex(ctx, digest, &digestLen);
+    EVP_MD_CTX_free(ctx);
+    CloseHandle(hFile);
+
+    if (!ok)
+        return false;
+    out.clear();
+    char hex[3];
+    for (unsigned int i = 0; i < digestLen; i++) {
+        snprintf(hex, sizeof(hex), "%02x", digest[i]);
+        out += hex;
+    }
+    return true;
 }
 
 bool updater_downloadDLL(const char *url, const char *downloadPath, char *errorBuffer, size_t errorBufferSize, int retryCount = 0) {
@@ -158,7 +181,7 @@ bool updater_downloadDLL(const char *url, const char *downloadPath, char *errorB
 }
 
 
-bool updater_downloadAndReplaceDllFile(const char *url, char *errorBuffer, size_t errorBufferSize) { 
+bool updater_downloadAndReplaceDllFile(const char *url, const char *sha256, char *errorBuffer, size_t errorBufferSize) {
 
     const char destinationFileName[] = "mss32_new.dll";
     const char oldFileName[] = "mss32_old.dll";
@@ -177,6 +200,14 @@ bool updater_downloadAndReplaceDllFile(const char *url, char *errorBuffer, size_
     // Download the DLL
     bool ok = updater_downloadDLL(url, dllFilePathNew, errorBuffer, errorBufferSize);
     if (!ok) return false;
+
+    // 125 Hz fork: install only the exact file listed in update.json
+    std::string actualSha256;
+    if (!updater_fileSha256(dllFilePathNew, actualSha256) || actualSha256 != sha256) {
+        snprintf(errorBuffer, errorBufferSize, "Downloaded file does not match the expected SHA-256.");
+        DeleteFileA(dllFilePathNew);
+        return false;
+    }
 
 
     // Rename the existing DLL
@@ -207,163 +238,41 @@ bool updater_downloadAndReplaceDllFile(const char *url, char *errorBuffer, size_
 }
 
 
-bool updater_resolveServerAddress() {
-    // Resolve the Auto-Update server address if not already resolved
-    if (updater_address.type == NA_INIT) 
-    {
-        Com_DPrintf("Resolving AutoUpdate Server %s...\n", SERVER_UPDATE_URI);
-        if (!NET_StringToAdr(SERVER_UPDATE_URI, &updater_address))
-        {
-            Com_Printf("\nFailed to resolve AutoUpdate server %s.\n", SERVER_UPDATE_URI);
-            return false;
-        }
-
-        updater_address.port = BigShort(SERVER_UPDATE_PORT); // Swap the port bytes
-
-        Com_DPrintf("AutoUpdate resolved to %s\n", NET_AdrToString(updater_address));
-    }
-    return true;
-}
-
-
-
-// Sends the HTTPS update check with the same data as the UDP request (runs on a background thread).
-// If it fails, the UDP request is sent as a fallback.
+// Starts the update check against this fork's GitHub releases (runs on a background thread)
 static void updater_sendHttpsRequest() {
-    UpdaterHttpsRequest request;
-
-    if (dedicated->value.boolean == 0) // Client
-    {
-        char CDKeyHash[34];
-        CL_BuildMd5StrFromCDKey(CDKeyHash);
-
-        request.type = "client";
-        request.cdkeyHash = CDKeyHash;
-        request.regid = hwid_regid;
-        request.hasHwid = true;
-        request.hwid = cl_hwid ? cl_hwid->value.integer : 0;
-        request.hwid2 = cl_hwid2 ? cl_hwid2->value.string : "";
-        request.hwid2Old = hwid_old;
-        request.hasHwid2DiffCnt = true;
-        request.hwid2DiffCnt = hwid_changed_count;
-        request.hwid2Diff = hwid_changed_diff;
-        request.systemInfo = SYS_VERSION_INFO;
-    } else {
-        request.type = "server";
-    }
-
-    if (updater_https_checkForUpdate(request)) {
+    if (updater_https_checkForUpdate()) {
         Com_Printf("Auto-Updater: Checking for updates...\n");
     }
 }
 
-// This function is called on startup to check for updates
-// Original func: 0x0041162f
-bool updater_sendRequest() {
-
-    // Resolve the Auto-Update server address if not already resolved
-    updater_resolveServerAddress();
-
-    Com_Printf("Auto-Updater: Checking for updates...\n");
-
-    char udpPayload[4096];
-
-    if (dedicated->value.boolean == 0) // Client
-    {
-        int hwid = cl_hwid ? cl_hwid->value.integer : 0;
-        const char* hwid2 = cl_hwid2 ? cl_hwid2->value.string : "";
-
-        char CDKeyHash[34];
-        CL_BuildMd5StrFromCDKey(CDKeyHash);
-
-        char hwid_changed_diff_escaped[1024] = {};
-        // Escape the hwid_changed_diff for use in the UDP payload
-        for (size_t i = 0; i < sizeof(hwid_changed_diff) - 1 && hwid_changed_diff[i] != '\0'; ++i) {
-            if (hwid_changed_diff[i] == '"') {
-                hwid_changed_diff_escaped[i] = '\'';
-            } else {
-                hwid_changed_diff_escaped[i] = hwid_changed_diff[i];
-            }
-        }
-
-        char data[2048] = {0};
-        snprintf(data, sizeof(data), "\"%s\" \"%s\" \"%i\" \"%s\" \"%s\" \"%i\" \"%s\" \"%s\"",
-            CDKeyHash, hwid_regid, hwid, hwid2, hwid_old, hwid_changed_count, hwid_changed_diff_escaped, SYS_VERSION_INFO);
-
-        // Base64 encode the data
-        char encodedData[2800] = {0};
-        int base64status = base64_encode((const uint8_t*)data, strlen(data), encodedData, sizeof(encodedData));
-        if (base64status < 0) {
-            SHOW_ERROR("Failed to encode data for Auto-Update request.");
-            exit(1);
-        }
-
-        // Calculate the CRC16 of the data
-        uint16_t crc = crc16_ccitt((const uint8_t*)encodedData, strlen(encodedData));
-
-        // Format the UDP payload
-        snprintf(udpPayload, sizeof(udpPayload),
-            "getUpdateInfo3 \"CoD2x MP\" \"" APP_VERSION "\" \"win-x86\" \"client\" \"%04x\" \"%s\"\n",
-            crc, encodedData);
-
-    } else {
-        // Server
-        snprintf(udpPayload, sizeof(udpPayload),
-            "getUpdateInfo2 \"CoD2x MP\" \"" APP_VERSION "\" \"win-x86\" \"server\"\n");
-    }
-
-
-
-    bool status = NET_OutOfBandPrint(NS_CLIENT, updater_address, udpPayload);
-
-    updater_waitingForResponse = true;
-    updater_waitingForResponseTime = GetTickCount();
-
-    Com_Printf("-----------------------------------\n");
-
-    return status;
-}
-
-
-// This function is called when the game receives a response from the Auto-Update server
+// This function is called when the game receives a response from the official Auto-Update server
 // Original func: 0x0040ef9c CL_UpdateInfoPacket()
 void updater_updatePacketResponse(struct netaddr_s addr)
 {
-    if (updater_address.type == NA_BAD) {
-        Com_DPrintf("Auto-Updater has bad address\n");
-        return;
-    }
-
-    Com_DPrintf("Auto-Updater response from %s\n", NET_AdrToString(addr));
-    
-    if (NET_CompareBaseAdrSigned(&updater_address, &addr))
-    {
-        Com_DPrintf("Received update packet from unexpected IP.\n");
-        return;
-    }
-
-    updater_processResponse(atol(Cmd_Argv(1)), Cmd_Argv(2), Cmd_Argv(3));
+    // 125 Hz fork: updates come only from this fork's GitHub releases, UDP update packets are ignored
+    Com_DPrintf("Auto-Updater: ignored UDP update packet from %s\n", NET_AdrToString(addr));
 }
 
 
-// Process the update check response (from UDP or HTTPS)
-static void updater_processResponse(int updateAvailable, const char* updateFile, const char* newVersionString)
+// Process the update check result
+static void updater_processResponse(int updateAvailable, const char* updateFile, const char* newVersionString, const char* sha256)
 {
     Com_Printf("-----------------------------------\n");
 
     updater_waitingForResponse = false;
     updater_waitingForResponseRepeats = 0;
 
-    hwid_clearRegistryFromHWIDChange();
+    // The HWID change record is left in the registry for the official CoD2x, which reports it to its server
 
     if (updateAvailable) {
         Com_Printf("CoD2x: Update available: %s -> %s\n", APP_VERSION, newVersionString);
+        updater_expectedSha256 = sha256;
 
         // Server
         if (dedicated->value.boolean > 0) {
             Com_Printf("Downloading file '%s'...\n", updateFile);
             char errorBuffer[1024];
-            bool ok = updater_downloadAndReplaceDllFile(updateFile, errorBuffer, sizeof(errorBuffer));  
+            bool ok = updater_downloadAndReplaceDllFile(updateFile, sha256, errorBuffer, sizeof(errorBuffer));
             if (ok) {
                 Com_Printf("Successfully downloaded and replaced file.\n");
                 Com_Printf("The update will take effect after the next server restart.\n");
@@ -405,15 +314,12 @@ static void updater_processResponse(int updateAvailable, const char* updateFile,
 static void updater_processHttpsResult(const UpdaterHttpsResult& result)
 {
     if (result.ok) {
-        updater_processResponse(result.available, result.url.c_str(), result.version.c_str());
+        updater_processResponse(result.available, result.url.c_str(), result.version.c_str(), result.sha256.c_str());
         return;
     }
 
+    // 125 Hz fork: no fallback to the official update server
     Com_Printf("Auto-Updater: Request failed: %s\n", result.error.c_str());
-
-    // Fallback to the legacy UDP request (the master server logs UDP requests from new versions as HTTPS failures)
-    Com_Printf("Auto-Updater: Trying UDP...\n");
-    updater_sendRequest();
 }
 
 
@@ -423,7 +329,7 @@ static void updater_processHttpsResult(const UpdaterHttpsResult& result)
 // Original func: 0x0053bc40
 void updater_dialogConfirmed() {
     char errorBuffer[1024];
-    bool ok = updater_downloadAndReplaceDllFile(cl_updateFiles->value.string, errorBuffer, sizeof(errorBuffer));
+    bool ok = updater_downloadAndReplaceDllFile(cl_updateFiles->value.string, updater_expectedSha256.c_str(), errorBuffer, sizeof(errorBuffer));
     if (ok) {
         // Restart the application with command line arguments
         ShellExecute(NULL, "open", EXE_PATH, EXE_COMMAND_LINE, NULL, SW_SHOWNORMAL);
