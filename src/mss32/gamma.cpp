@@ -47,11 +47,8 @@ static void gamma_updateRequestedGamma()
         return;
     }
 
-    if (gammaCvar->modified)
-    {
-        gammaCvar->modified = false;
-    }
-
+    // The modified flag is left for the renderer: in fullscreen it applies r_gamma through the
+    // D3D device only when the flag is set, so clearing it here made fullscreen ignore r_gamma.
     float gamma = gammaCvar->value.decimal;
     if (gamma != gamma_previous)
     {
@@ -317,16 +314,25 @@ static void gamma_syncWindowedMode()
     float gamma = gammaCvar->value.decimal;
     if (r_fullscreen->value.boolean || hWnd == NULL)
     {
+        bool rampReset = gamma_monitor.customRampApplied;
+
         if (hWnd != NULL)
         {
             char currentDeviceName[32] = "";
             if (gamma_getWindowMonitorDeviceName(hWnd, currentDeviceName, sizeof(currentDeviceName)))
             {
-                gamma_restoreSavedRampForDevice(currentDeviceName);
+                rampReset |= gamma_restoreSavedRampForDevice(currentDeviceName);
             }
         }
 
         gamma_restore();
+
+        // Restoring the monitor ramp also overwrites the ramp the renderer set for fullscreen,
+        // so have the renderer apply r_gamma again
+        if (rampReset && r_fullscreen->value.boolean)
+        {
+            gammaCvar->modified = true;
+        }
         return;
     }
 
