@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <stdio.h>
 #include <string.h>
+#include <cpuid.h>
 
 #include "shared.h"
 
@@ -12,8 +13,27 @@ char SYS_WIN_DISPLAY_VERSION[32] = {0};
 char SYS_WINE_VERSION[64] = {0};
 char SYS_WINE_BUILD[64] = {0};
 char SYS_VERSION_INFO[256] = {0};
-char SYS_VM_NAME[64] = {0}; // Name of the virtualization platform, if detected
-char SYS_COMPATIBILITY_FLAGS[64] = {0}; // Stores compatibility flags if any
+char SYS_VM_NAME[64] = {0};
+char SYS_COMPATIBILITY_FLAGS[64] = {0};
+char SYS_LANGUAGE_CODE[8] = {0};
+char SYS_VIRTUALIZATION[128] = {0};
+char SYS_GPU_INFO[512] = {0};
+char SYS_CPU_BRAND[128] = {0};
+bool SYS_IS_ELEVATED = false;
+
+// CPU brand string from CPUID leaves 0x80000002-0x80000004 (e.g. "Intel(R) Core(TM) i7-9700K ...").
+static void system_getCpuBrand() {
+    unsigned int r[12] = {0};
+    if (__get_cpuid(0x80000002, &r[0], &r[1], &r[2], &r[3]) &&
+        __get_cpuid(0x80000003, &r[4], &r[5], &r[6], &r[7]) &&
+        __get_cpuid(0x80000004, &r[8], &r[9], &r[10], &r[11])) {
+        char brand[49];
+        memcpy(brand, r, 48);
+        brand[48] = '\0';
+        const char* p = brand; while (*p == ' ') p++;   // CPUID often left-pads with spaces
+        snprintf(SYS_CPU_BRAND, sizeof(SYS_CPU_BRAND), "%s", p);
+    }
+}
 
 extern bool admin_isElevated();
 
@@ -171,9 +191,55 @@ bool system_isVirtualMachineBios() {
     return false;
 }
 
-void system_getCountryCode(char *buffer, int bufferSize) {
+void system_getLanguageCode(char *buffer, int bufferSize) {
     if (!GetLocaleInfoA(LOCALE_USER_DEFAULT, LOCALE_SISO3166CTRYNAME, buffer, bufferSize)) {
         snprintf(buffer, bufferSize, "??");
+    }
+}
+
+// Reads the display adapters and their driver versions from the registry.
+// Format: "<adapter> (driver <version>, <date>)", multiple adapters separated by "; ".
+void system_getGpuInfo() {
+    size_t pos = 0;
+    SYS_GPU_INFO[0] = '\0';
+
+    for (DWORD i = 0; i < 16 && pos + 1 < sizeof(SYS_GPU_INFO); i++) {
+        DISPLAY_DEVICEA dd = {};
+        dd.cb = sizeof(dd);
+        if (!EnumDisplayDevicesA(NULL, i, &dd, 0))
+            break;
+        if ((dd.StateFlags & DISPLAY_DEVICE_MIRRORING_DRIVER) || dd.DeviceString[0] == '\0')
+            continue;
+
+        // The same adapter is listed once per output
+        if (strstr(SYS_GPU_INFO, dd.DeviceString))
+            continue;
+
+        // DeviceKey: \Registry\Machine\System\CurrentControlSet\Control\Video\{GUID}\0000
+        char driverVersion[64] = {0};
+        char driverDate[32] = {0};
+        const char* prefix = "\\Registry\\Machine\\";
+        size_t prefixLen = strlen(prefix);
+        HKEY hKey;
+        if (_strnicmp(dd.DeviceKey, prefix, prefixLen) == 0 &&
+            RegOpenKeyExA(HKEY_LOCAL_MACHINE, dd.DeviceKey + prefixLen, 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+            DWORD size = sizeof(driverVersion) - 1;
+            RegQueryValueExA(hKey, "DriverVersion", NULL, NULL, (LPBYTE)driverVersion, &size);
+            size = sizeof(driverDate) - 1;
+            RegQueryValueExA(hKey, "DriverDate", NULL, NULL, (LPBYTE)driverDate, &size);
+            RegCloseKey(hKey);
+        }
+
+        int wrote = snprintf(SYS_GPU_INFO + pos, sizeof(SYS_GPU_INFO) - pos, "%s%s (driver %s, %s)%s",
+            pos > 0 ? "; " : "", dd.DeviceString,
+            driverVersion[0] ? driverVersion : "?",
+            driverDate[0] ? driverDate : "?",
+            (dd.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) ? " [primary]" : "");
+        if (wrote < 0)
+            break;
+        pos += (size_t)wrote;
+        if (pos >= sizeof(SYS_GPU_INFO))
+            break;
     }
 }
 
@@ -188,7 +254,7 @@ void system_getInfo() {
     // Get virtualization info
     bool isVM = system_isVirtualMachineBios();
 
-    char virtualization[512];
+    char virtualization[128];
     if (isWine) {
         snprintf(virtualization, sizeof(virtualization), "wine-%s-%s", SYS_WINE_VERSION, SYS_WINE_BUILD);
     } else if (isVM) {
@@ -197,20 +263,30 @@ void system_getInfo() {
         snprintf(virtualization, sizeof(virtualization), "0");
     }
 
-    // Get country code
-    char countryCode[8] = {0};
-    system_getCountryCode(countryCode, sizeof(countryCode)); 
+    // Get language code
+    char languageCode[8] = {0};
+    system_getLanguageCode(languageCode, sizeof(languageCode)); 
 
     // Get compatibility flags
     system_getCompatibilityFlags();
 
+    // Get display adapters and driver versions (used in crash and error reports)
+    system_getGpuInfo();
+
+    // Get CPU brand string
+    system_getCpuBrand();
+
     // If running with admin rights, append "admin" to the virtualization string
     bool isElevated = admin_isElevated();
 
+    // Store computed values as globals
+    strncpy(SYS_LANGUAGE_CODE, languageCode, sizeof(SYS_LANGUAGE_CODE) - 1);
+    strncpy(SYS_VIRTUALIZATION, virtualization, sizeof(SYS_VIRTUALIZATION) - 1);
+    SYS_IS_ELEVATED = isElevated;
 
     // Compose final version info string
-    // Format: "<build>-<edition>-<displayVersion>-<country>-<virtualization>-<compatibilityFlags>-<admin>"
-    snprintf(SYS_VERSION_INFO, sizeof(SYS_VERSION_INFO), "%s\n%s\n%s\n%s\n%s\n%s\n%s", SYS_WIN_BUILD, SYS_WIN_EDITION, SYS_WIN_DISPLAY_VERSION, countryCode, virtualization, SYS_COMPATIBILITY_FLAGS, isElevated ? "admin" : "user");
+    // Format: "<build>-<edition>-<displayVersion>-<language>-<virtualization>-<compatibilityFlags>-<admin>"
+    snprintf(SYS_VERSION_INFO, sizeof(SYS_VERSION_INFO), "%s\n%s\n%s\n%s\n%s\n%s\n%s", SYS_WIN_BUILD, SYS_WIN_EDITION, SYS_WIN_DISPLAY_VERSION, SYS_LANGUAGE_CODE, virtualization, SYS_COMPATIBILITY_FLAGS, isElevated ? "admin" : "user");
 
     //MessageBoxA(NULL, SYS_VERSION_INFO, "System Info", MB_OK | MB_ICONINFORMATION);
 }

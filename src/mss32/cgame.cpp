@@ -21,6 +21,8 @@
 #define cg_thirdPersonRange           (*((dvar_t**)0x0166baa0))
 
 dvar_t* cg_thirdPersonMode;
+dvar_t* cl_hideServerIp;
+bool cgame_hideServerIp = false; // cl_hideServerIp or sv_hideServerIp of the connected server, updated every frame
 
 extern dvar_t* g_cod2x;
 
@@ -116,6 +118,11 @@ void cgame_init() {
     // Add another mode to thirdperson
     cg_thirdPersonMode = Dvar_RegisterInt("cg_thirdPersonMode", 0, 0, 1, (enum dvarFlags_e)(DVAR_CHEAT | DVAR_CHANGEABLE_RESET));
 
+    // Hide IP addresses for streaming - the server address on the scoreboard and IP addresses in all drawn texts
+    // (console, menus, the connect command while typing), see Text_HideIpAddresses in text.cpp.
+    // The server can enforce the same with sv_hideServerIp while the client is connected, no matter this setting.
+    cl_hideServerIp = Dvar_RegisterBool("cl_hideServerIp", false, (enum dvarFlags_e)(DVAR_ARCHIVE | DVAR_CHANGEABLE_RESET));
+
     Cmd_AddCommand("increase", Cmd_Increase_Decrease);
     Cmd_AddCommand("decrease", Cmd_Increase_Decrease);
 }
@@ -176,6 +183,11 @@ void cgame_frame() {
         }
     }
     cgame_demoPlayingLast = demo_isPlaying;
+
+
+    // IP addresses are hidden if the client enables cl_hideServerIp or the connected server sets sv_hideServerIp
+    cgame_hideServerIp = cl_hideServerIp->value.boolean ||
+        (clientState >= CLIENT_STATE_CONNECTED && Info_ValueForKey(CL_GetConfigString(CS_SERVERINFO), "sv_hideServerIp")[0] == '1');
 
 
     cgame_clientStateLast = clientState;
@@ -284,12 +296,38 @@ void CG_OffsetThirdPersonView( void ) {
 
 
 
+/**
+ * Returns "ip:port" of the server the client is connected to - drawn in the bottom right corner of the scoreboard.
+ * When the client enables cl_hideServerIp or the server enables sv_hideServerIp (for example while a streamed match
+ * is running), an empty string is returned so the IP address is not drawn and streams do not leak the server address.
+ * The server can always hide it, the client can hide it on any server. The hostname in the bottom left corner stays visible.
+ */
+// 004120f0    char* CL_GetServerIPAddress()
+const char* CL_GetServerIPAddress() {
+    // CoD2x: Hide the server IP address if the client or the server requests it
+    if (cgame_hideServerIp) {
+        return "";
+    }
+    // CoD2x: End
+
+    // Call the original function
+    const char* ret;
+    ASM_CALL(RETURN(ret), 0x004120f0);
+    return ret;
+}
+
+
 /** Called before the entry point is called. Used to patch the memory. */
 void cgame_patch() {
 
     patch_call(0x004cfb27, (unsigned int)CG_OffsetThirdPersonView);
 
     patch_call(0x004031dc, (unsigned int)CL_AdjustTimeDelta); // CL_SetCGameTime
+
+    // Hook the function that returns the server address drawn at the bottom of the scoreboard,
+    // so it can be hidden by the client cvar cl_hideServerIp or the serverinfo cvar sv_hideServerIp
+    patch_call(0x004d9387, (unsigned int)CL_GetServerIPAddress); // 004d9387  e8648df3ff  call CL_GetServerIPAddress (inside CG_DrawScoreboard)
+
 
 
     // Cvar "snaps" max value change from 30 to 125

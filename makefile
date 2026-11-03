@@ -29,16 +29,21 @@ VERSION_PROTOCOL = 6
 
 # CoD2x patch version
 # Should be increased when new version is released and the changes are backward compatible
-VERSION_PATCH = 8
+VERSION_PATCH = 9
 
 # CoD2x test version (e.g. -test.1)
-VERSION_TEST =
-VERSION_IS_TEST = 0
+VERSION_TEST = -test.1
+VERSION_IS_TEST = 1
 
 # Full version string
 # Example "1.4.1.1"  or  "1.4.1.1-test.1"
 VERSION = $(VERSION_MAJOR).$(VERSION_MINOR).$(VERSION_PROTOCOL).$(VERSION_PATCH)$(VERSION_TEST)
 VERSION_COMMA = $(VERSION_MAJOR),$(VERSION_MINOR),$(VERSION_PROTOCOL),$(VERSION_PATCH)
+
+# Print the current version string (CI verifies the release tag matches this). No build.
+.PHONY: print-version
+print-version:
+	@echo $(VERSION)
 
 
 # ========================================================================================================
@@ -80,19 +85,30 @@ clean: clean_win clean_linux
 # =========================================
 # Windows targets
 # =========================================
-.PHONY: rebuild_win build_win configure_win clean_win
+.PHONY: rebuild_win build_win build_win_test configure_win clean_win
 
 rebuild_win: clean_win build_win
 
+# Crash-handler self-test build: same as build_win but with the EXCEPTION_TEST capability compiled in.
+# Run the client with "+set exception_test <mode>" to trigger a scenario (see src/mss32/exception.cpp
+# and tools/test/run_crash_tests.ps1).
+build_win_test: WIN_EXTRA_CMAKE = -DEXCEPTION_TEST=ON
+build_win_test: build_win
+
 configure_win:
 	@echo ">> Configuring Windows $(BUILD_TYPE) build...";
-	$(CMAKE) -S . -B $(WIN_BUILD_DIR) -G $(WIN_GENERATOR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE)
+	$(CMAKE) -S . -B $(WIN_BUILD_DIR) -G $(WIN_GENERATOR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) $(WIN_EXTRA_CMAKE)
+
+# The MinGW assembler (binutils 2.43.1) randomly rejects valid input ("unknown pseudo-op: `.ascii'")
+# when many instances run at once. A failed build is retried, ninja rebuilds only the failed objects.
+WIN_BUILD_CMD = $(CMAKE) --build $(WIN_BUILD_DIR) --target $(WIN_TARGET) --parallel
+WIN_BUILD_RETRY = $(WIN_BUILD_CMD) || $(WIN_BUILD_CMD) || $(WIN_BUILD_CMD)
 
 build_win: prebuild configure_win
-	$(CMAKE) --build $(WIN_BUILD_DIR) --target $(WIN_TARGET) --parallel
+	$(WIN_BUILD_RETRY)
 ifeq ($(BUILD_TYPE),Release)
 	@echo Re-building with accurate mss32 symbols...
-	$(CMAKE) --build $(WIN_BUILD_DIR) --target $(WIN_TARGET) --parallel
+	$(WIN_BUILD_RETRY)
 endif
 
 	@echo Renaming mss32.build.dll to mss32.dll + deleting old versions...
@@ -115,17 +131,27 @@ endif
 # =========================================
 # Linux targets
 # =========================================
-.PHONY: rebuild_linux build_linux configure_linux clean_linux
+.PHONY: rebuild_linux build_linux build_linux_test configure_linux clean_linux
 
 rebuild_linux: clean build_linux
 
+# Crash-handler self-test build: same as build_linux but with the EXCEPTION_TEST capability compiled in.
+# Run the server with "COD2X_EXCEPTION_TEST=<mode>" to trigger a scenario (see src/linux/exception.cpp and
+# tools/test/run_crash_tests_linux.sh).
+build_linux_test: LINUX_EXTRA_CMAKE = -DEXCEPTION_TEST=ON
+build_linux_test: build_linux
+
 configure_linux:
 	@echo ">> Configuring Linux $(BUILD_TYPE) build...";
-	$(CMAKE) -S . -B $(LINUX_BUILD_DIR) -G $(LINUX_GENERATOR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE)
+	$(CMAKE) -S . -B $(LINUX_BUILD_DIR) -G $(LINUX_GENERATOR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) $(LINUX_EXTRA_CMAKE)
 
 build_linux: prebuild configure_linux
 	@echo ">> Building Linux $(BUILD_TYPE)...";
 	$(CMAKE) --build $(LINUX_BUILD_DIR) --target $(LINUX_TARGET) --parallel
+ifeq ($(BUILD_TYPE),Release)
+	@echo Re-building with accurate libCoD2x symbols...
+	$(CMAKE) --build $(LINUX_BUILD_DIR) --target $(LINUX_TARGET) --parallel
+endif
 
 clean_linux:
 ifeq ($(OS),Windows_NT)
@@ -216,81 +242,10 @@ $(DIR)/$(CLASSNAME).h $(DIR)/$(CLASSNAME).cpp: src/_template.h.in src/_template.
 # ========================================================================================================
 # Ziping
 # ========================================================================================================
-.PHONY: zip_all
-zip_all: zip_win zip_linux
+# Release archives (CoD2x_<ver>_<os>.zip) are built by CI (.github/scripts/package.sh), not here.
+# This section only builds the embedded IWD asset below.
 
 ZIP_EXEC = 7za.exe
-
-
-# ========================================================================================================
-# Zip windows files
-# ========================================================================================================
-.PHONY: zip_win zip_win_clean
-
-# Define source files and target paths
-ZIP_WIN_DIR = zip/windows
-ZIP_WIN_FILES = bin/windows/mss32.dll bin/windows/mss32_original.dll
-ZIP_WIN_NAME = CoD2x_$(VERSION)_windows.zip
-ZIP_WIN_OUTPUT = $(ZIP_WIN_DIR)/$(ZIP_WIN_NAME)
-
-# Rule to create the zip file
-$(ZIP_WIN_OUTPUT): $(ZIP_WIN_FILES) | $(ZIP_WIN_DIR)
-	@echo "Copying files to $(subst /,\, $(ZIP_WIN_DIR))..."
-	@for %%f in ($(subst /,\, $(ZIP_WIN_FILES))) do copy %%f $(subst /,\, $(ZIP_WIN_DIR)) >nul
-	@echo "Creating zip archive $(subst /,\, $(ZIP_WIN_OUTPUT)) using 7-Zip..."
-	@echo $(ZIP_EXEC) a -tzip "$(subst /,\, $(ZIP_WIN_OUTPUT))" "$(subst /,\, $(ZIP_WIN_DIR))\*"
-	@cd $(subst /,\, $(ZIP_WIN_DIR)) && $(ZIP_EXEC) a -tzip "$(ZIP_WIN_NAME)" *
-	@echo "Zip archive created at $(subst /,\, $(ZIP_WIN_OUTPUT))."
-
-# Rule to ensure the zip directory exists
-$(ZIP_WIN_DIR):
-	@echo "Creating directory $(ZIP_WIN_DIR)..."
-	@mkdir -p $(ZIP_WIN_DIR)
-
-zip_win: zip_win_clean $(ZIP_WIN_OUTPUT)
-
-zip_win_clean:
-	@echo "Cleaning up $(subst /,\, $(ZIP_WIN_DIR)), preserving manual..."
-	@if exist $(subst /,\, $(ZIP_WIN_DIR)) ( \
-	    for %%f in ($(subst /,\, $(ZIP_WIN_DIR))\*) do ( \
-	        if /I not "%%~nxf"=="CoD2x Installation and uninstallation manual.txt" del /Q "%%f" \
-	    ) \
-	)
-
-
-# ========================================================================================================
-# Zip Linux files
-# ========================================================================================================
-.PHONY: zip_linux zip_linux_clean
-
-ZIP_LINUX_DIR = zip/linux
-ZIP_LINUX_FILES = bin/linux/libCoD2x.so bin/linux/cod2_lnxded
-ZIP_LINUX_NAME = CoD2x_$(VERSION)_linux.zip
-ZIP_LINUX_OUTPUT = $(ZIP_LINUX_DIR)/$(ZIP_LINUX_NAME)
-
-# Rule to create the Linux zip file
-$(ZIP_LINUX_OUTPUT): $(ZIP_LINUX_FILES) | $(ZIP_LINUX_DIR)
-	@echo "Copying files to $(subst /,\, $(ZIP_LINUX_DIR))..."
-	@for %%f in ($(subst /,\, $(ZIP_LINUX_FILES))) do copy %%f $(subst /,\, $(ZIP_LINUX_DIR)) >nul
-	@echo "Creating zip archive $(subst /,\, $(ZIP_LINUX_OUTPUT)) using 7-Zip..."
-	@echo $(ZIP_EXEC) a -tzip "$(subst /,\, $(ZIP_LINUX_OUTPUT))" "$(subst /,\, $(ZIP_LINUX_DIR))\*"
-	@cd $(subst /,\, $(ZIP_LINUX_DIR)) && $(ZIP_EXEC) a -tzip "$(ZIP_LINUX_NAME)" *
-	@echo "Zip archive created at $(subst /,\, $(ZIP_LINUX_OUTPUT))."
-
-# Rule to ensure the Linux zip directory exists
-$(ZIP_LINUX_DIR):
-	@echo "Creating directory $(ZIP_LINUX_DIR)..."
-	@mkdir -p $(ZIP_LINUX_DIR)
-
-zip_linux: zip_linux_clean $(ZIP_LINUX_OUTPUT)
-
-zip_linux_clean:
-	@echo "Cleaning up $(subst /,\, $(ZIP_LINUX_DIR)), preserving manual..."
-	@if exist $(subst /,\, $(ZIP_LINUX_DIR)) ( \
-	    for %%f in ($(subst /,\, $(ZIP_LINUX_DIR))\*) do ( \
-	        if /I not "%%~nxf"=="CoD2x Installation and uninstallation manual.txt" del /Q "%%f" \
-	    ) \
-	)
 
 
 # ========================================================================================================

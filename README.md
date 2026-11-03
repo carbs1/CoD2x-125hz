@@ -15,6 +15,7 @@ Experimental 125 Hz branch: [timing corrections and validation](docs/125hz-timin
 - This software may be terminated or withdrawn at any time
 
 # Version history
+- 2026-10-18 - 1.4.6.9-test.1 - *current testing*
 - 2026-04-07 - **[1.4.6.8](https://github.com/callofduty2x/CoD2x/releases/tag/v1.4.6.8)** - **current**
 
 <details>
@@ -156,12 +157,15 @@ Experimental 125 Hz branch: [timing corrections and validation](docs/125hz-timin
     - `sv_master3` is customizable
 - New cvar `sv_cracked` to make the server accept players with invalid CDKEY
 - New cvar `showPacketStrings` to show network communication data
+- New cvar `sv_hideServerIp` to hide the server IP address at the bottom of the scoreboard (hostname stays visible), preventing the server address from leaking on streams
+  - automatically enabled when the match data contains `"hideServerIp": true`, restored when the match ends
+- New client cvar `cl_hideServerIp` for streaming - hides the server IP address on the scoreboard on any server and masks IP addresses in all texts on screen (console, menus, `/connect` while typing) - `connect 94.199.215.103:10405; password abc` is shown as `connect **.***.***.***:*****; password abc`
+  - the server enforces the same with `sv_hideServerIp` while the client is connected, no matter the client setting
 - New commands `/increase` and `/decrease` to increase or decrease the value of a cvar
 - Reversed function for third person, added new cvar `cg_thirdPersonMode 1` that rotates directly around player without collision with the world
 - Added possibility to set CPU affinity
-  - `com_affinity -1` (default) - use maximum available CPU cores
-  - `com_affinity 0` - disable automatically setting CPU affinity
-  - `com_affinity <number>` - set specified number of cores (e.g. `com_affinity 3` will use first 3 cores)
+  - `com_autoaffinity 1` (default) - use all available CPU cores
+  - `com_autoaffinity 0` - do not automatically set CPU affinity
 - Fixed sounds of invisible players caused by PVS
 - Changeable LODs (Level of Detail) for models
   - `r_lodScale <value>`
@@ -176,11 +180,12 @@ Experimental 125 Hz branch: [timing corrections and validation](docs/125hz-timin
 - Radar
 - vMIX support
 - URL protocol to launch the game from web links: `cod2x://`
-- Toggle killfeed custom color rendering (`con_printDoubleColors`);
+- Toggle colored player names (double colors) in killfeed and chat (`con_printDoubleColors`);
 - Bullet trace debugging (`cg_debugBullets`);
 - Automatic zPAM updates
 - Smarter IWD handling and configs: always use `main/config_mp.cfg`; improved filtering to prevent sum/name mismatch; for demos only IWDs used at record-time are loaded; for listen servers only the latest zPAM files are loaded; assets in `movie` are included for demo playback; automatic extraction of `iw_CoD2x_01.iwd`.
 - Cvar to disable saving changes to config via cvar `com_writeConfig`
+- Allow scanning 32 LAN servers instead of 4
 
 
 # GSC functions
@@ -267,6 +272,17 @@ Experimental 125 Hz branch: [timing corrections and validation](docs/125hz-timin
     - `LD_PRELOAD=./libCoD2x.so ./cod2_lnxded +set dedicated 2 +exec server.cfg`
     - 🛈 Its not common that server providers support adding this, only server administrators can do that.
 7. Auto-update is enabled by default. Make sure to enable UDP port 20720. If you want to disable auto-update, set `sv_update "0"` or disable UDP port 20720. On server start, the server will check for the latest version of CoD2x and download it if available. File libCoD2x.so will be replaced with the latest version. Process restart is needed to apply the update. 
+
+# How to run server in Docker (Linux)
+The image is built from the source in this repository (`libCoD2x.so` + original `cod2_lnxded` 1.3).
+1. Put the original Call of Duty 2 game files (`iw_*.iwd`, `localized_*.iwd`) and your `server.cfg` into a `main` folder next to `compose.yaml`
+2. Optionally put mods into a `mods` folder next to `compose.yaml` and load them with `+set fs_game mods/<name>` in `command` of `compose.yaml`
+3. Build the image and start the server:
+    ```
+    docker compose up -d --build
+    ```
+4. Only UDP port `28960` is needed. The server log is printed to the container output (`docker logs -f cod2x`).
+5. Auto-update is disabled (`sv_update 0`) because the image is rebuilt instead. To update CoD2x, pull the latest version of this repository and rebuild the image (step 3).
 
 # How to run server
 ## On Windows
@@ -411,7 +427,6 @@ These functions act as a proxy to the original functions in the original mss32.d
 
 When our mss32.dll is loaded, it loads mss32_original.dll and redirect all exported functions.
 It also runs patching process that modifies the game memory to fix some bugs and add new features.
-
 
 # References
 - [CoD2rev_Server](https://github.com/voron00/CoD2rev_Server)

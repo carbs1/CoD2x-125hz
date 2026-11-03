@@ -23,12 +23,14 @@
 #include "hwid.h"
 #include "radar.h"
 #include "drawing.h"
+#include "text.h"
 #include "master_server.h"
 #include "error.h"
 #include "downloading.h"
 #include "demo.h"
 #include "vmix.h"
 #include "debug.h"
+#include "module_detection.h"
 #include "../shared/iwd.h"
 #include "../shared/common.h"
 #include "../shared/server.h"
@@ -44,6 +46,8 @@
 HMODULE hModule;
 unsigned int gfx_module_addr;
 bool hook_hotreload_init = false;
+volatile unsigned int hook_comFrameCount = 0;   // number of started frames (crash report)
+volatile bool hook_insideComFrame = false;      // true while a frame is running (crash report)
 
 
 /**
@@ -63,9 +67,11 @@ void hook_CL_Frame()
  * Com_Frame
  * Is called in the main loop every frame.
  */
-void hook_Com_Frame() 
+void hook_Com_Frame()
 {
-    logger_add("Com_Frame starting...");
+    // Not logged with logger_add, two messages per frame would push everything else out of the log ring buffer
+    hook_comFrameCount++;
+    hook_insideComFrame = true;
 
     #if DEBUG
         // First frame from newly loaded DLL, we need to initialize
@@ -85,13 +91,16 @@ void hook_Com_Frame()
             } else {
                 // Unloading
                 hotreload_unload();
+                exception_unload();
                 debug_unload();
                 common_unload();
                 weapons_unload();
                 radar_unload();
                 demo_unload();
+                text_unload();
 
                 hotreload_loadDLL();
+                hook_insideComFrame = false;
                 return;
             }
         }
@@ -99,12 +108,14 @@ void hook_Com_Frame()
 
     // Only for client
     if (dedicated->value.integer == 0) {
-        affinity_frame();
+        text_frame();
         competitive_frame();
         cgame_frame();
     }
 
     // Shared & Server
+    exception_frame();
+    module_detection_frame();
     debug_frame();
     freeze_frame();
     updater_frame();
@@ -122,7 +133,7 @@ void hook_Com_Frame()
     // Call the original function
     ASM_CALL(RETURN_VOID, 0x00434f70);
 
-    logger_add("Com_Frame finished.");
+    hook_insideComFrame = false;
 }
 
 
@@ -198,6 +209,7 @@ void hook_CL_Init() {
     master_server_init();
     match_init_client();
     drawing_init();
+    text_init();
     radar_init();
     demo_init();
     vmix_init();
@@ -205,6 +217,8 @@ void hook_CL_Init() {
     if (!DLL_HOTRELOAD) {
         ASM_CALL(RETURN_VOID, 0x00410a10);
     }
+
+    text_frame(); // the renderer is loaded, draw the loading screen with CoD2x text codes
 
     logger_add("CL_Init finished.");
 }
@@ -254,6 +268,8 @@ void hook_Com_Init(const char* cmdline) {
     Com_Printf("Command line: '%s'\n", cmdline);
 
     exception_init();   // sending thru NET will work after Com_Init is called and updater is initialized
+    module_detection_init();
+    affinity_init();
     debug_init();
     admin_init();      // Must be called before file system initialization
     registry_init();   // Must be called before cdkey registry reading
@@ -269,7 +285,6 @@ void hook_Com_Init(const char* cmdline) {
             hook_CL_Init();
     }
 
-    affinity_init();
     common_printInfo();
 
     logger_add("Com_Init finished.");
@@ -301,6 +316,9 @@ bool hook_patch() {
     patch_call(0x0043506a, (unsigned int)hook_CL_Frame);
     patch_call(0x004102b5, (unsigned int)hook_gfxDll);
 
+    // Crash handler first, so crashes during the rest of the game start are reported
+    exception_patch();
+
     // Patch client side
     error_patch();
     freeze_patch();
@@ -314,6 +332,7 @@ bool hook_patch() {
     master_server_patch();
     downloading_patch();
     drawing_patch();
+    text_patch();
     radar_patch();
     demo_patch();
     vmix_patch();
@@ -375,6 +394,11 @@ bool hook_patch() {
 
     // Fix MG sensitivity
     patch_byte(0x0040867d, 0xeb); // 7416 je 0x408695 => EB16 jmp 0x408695
+
+
+
+    // Allow scanning 32 LAN servers instead of 4
+    patch_byte(0x00411bce + 2, 32); // 83fe04 -> 83fe20  -  originally 4 (28960 to 28963), now 32 (28960 to 28991)
     
 
 

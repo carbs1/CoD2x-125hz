@@ -19,7 +19,6 @@ dvar_t* cg_drawCompass = NULL;
 dvar_t* cg_hudCompassOffsetX = NULL;
 dvar_t* cg_hudCompassOffsetY = NULL;
 dvar_t* cg_debugBullets = NULL;
-dvar_t* con_printDoubleColors = NULL;
 
 
 /**
@@ -130,119 +129,6 @@ void CG_BulletHitEvent() {
 }
 
 
-
-#define cl_consoleFrameCounter         (*((int32_t*)0x00601784))
-#define cl_consoleTotalBuffers         (*((int32_t*)0x00601798))
-#define cl_consoleBufferSize           (*((uint32_t*)0x00601794))
-#define cl_consoleBufferPos            (*((uint32_t*)0x00601788))
-#define cl_consoleBufferBase           ((uint16_t*)0x005E1784)
-
-// write character into console buffer (equivalent to the disassembly)
-void CL_WriteConsoleChar(uint32_t frameIndex, uint8_t ch, uint8_t colorNum)
-{
-    int frame = cl_consoleFrameCounter % cl_consoleTotalBuffers;
-    uint32_t dst = frame * cl_consoleBufferSize + cl_consoleBufferPos;
-    cl_consoleBufferBase[dst] = (uint16_t)((colorNum << 8) | ch);
-    cl_consoleBufferPos++;
-}
-
-// Fully replicates the disassembled function.
-void CL_AddConsoleText(int32_t color)
-{
-    char* str; ASM__movr(str, "eax");
-
-    int32_t colorNum = color;
-    char *p = str;
-
-    if (colorNum < 0)
-        colorNum = 7;
-
-    int32_t frameIndex = cl_consoleFrameCounter % cl_consoleTotalBuffers;
-
-    // Load first char
-    unsigned char ch1 = (unsigned char)*p;
-    unsigned char ch2 = ch1;
-
-    if (ch2) {
-        // Loop while we still have room in the current buffer
-        while (cl_consoleBufferPos < cl_consoleBufferSize) {
-
-            // ================================
-            // CoD2x: NEW BEHAVIOR - disable double colors
-            // ================================
-            if (!con_printDoubleColors->value.boolean) {
-                if (ch1 == '^') {
-                    // Count a run of carets
-                    size_t caretCount = 0;
-                    do { ++p; ++caretCount; } while (*p == '^');
-
-                    // Skip up to the same number of following digits [0-9]
-                    size_t digitCount = 0;
-                    while (p[digitCount] >= '0' && p[digitCount] <= '9') {
-                        ++digitCount;
-                    }
-                    size_t skipDigits = (digitCount < caretCount) ? digitCount : caretCount;
-                    p += skipDigits;
-
-                    // Load next char and continue without writing
-                    ch1 = (unsigned char)*p;
-                    ch2 = ch1;
-                    if (!ch2) break;
-                    continue;
-                } else {
-                    // Normal char path (CR/LF suppressed)
-                    ++p;
-                    if (ch2 != '\n' && ch2 != '\r') {
-                        CL_WriteConsoleChar((uint32_t)frameIndex, ch2, (uint8_t)colorNum);
-                    }
-                }
-            }
-
-            // ================================
-            // ORIGINAL BEHAVIOR - allow double colors
-            // ================================
-            else {
-                if (ch1 != '^') {
-                    // label_4054f1 path: consume one char and (unless CR/LF) write it
-                    p++;
-
-                    if (ch2 != '\n' && ch2 != '\r') {
-                        CL_WriteConsoleChar((uint32_t)frameIndex, ch2, colorNum);
-                    }
-                } else {
-                    // Caret found — check for a color digit
-                    unsigned char next = (unsigned char)p[1];
-
-                    // If invalid color escape, treat '^' as a normal char
-                    if (!next || next == '^' || next < '0' || next > '9') {
-                        p++;
-                        if (ch2 != '\n' && ch2 != '\r') {
-                            CL_WriteConsoleChar((uint32_t)frameIndex, ch2, colorNum);
-                        }
-                    } else {
-                        // Valid "^digit"
-                        if (color < 0) {
-                            uint32_t c = (uint32_t)(next - '0');  // 0..9
-                            if (c >= 10) c = 7;
-                            colorNum = c;
-                        }
-                        // Skip both '^' and digit; don't write them
-                        p += 2;
-                    }
-                }
-            }
-
-            // Next char
-            ch1 = (unsigned char)*p;
-            ch2 = ch1;
-            if (!ch2)
-                break;
-        }
-    }
-}
-
-
-
 // Help web page removed, fixed crash when getting translations
 void Sys_DirectXFatalError() {
     MessageBoxA(NULL, "DirectX(R) encountered an unrecoverable error.", "DirectX Error", MB_OK | MB_ICONERROR);
@@ -275,8 +161,6 @@ void drawing_init() {
     cg_hudCompassOffsetY = Dvar_RegisterFloat("cg_hudCompassOffsetY", 0.0f, -480.0f, 480.0f, (enum dvarFlags_e)(DVAR_CHANGEABLE_RESET));
 
     cg_debugBullets = Dvar_RegisterBool("cg_debugBullets", false, (enum dvarFlags_e)(DVAR_CHANGEABLE_RESET | DVAR_CHEAT));
-
-    con_printDoubleColors = Dvar_RegisterBool("con_printDoubleColors", true, (enum dvarFlags_e)(DVAR_CHANGEABLE_RESET));
 }
 
 /** Called before the entry point is called. Used to patch the memory. */
@@ -291,7 +175,6 @@ void drawing_patch() {
     patch_call(0x004cbd6b, (unsigned int)CG_DrawCrosshairNames);
 
     patch_call(0x004d7bce, (unsigned int)CG_BulletHitEvent);
-    patch_call(0x004d7bce, (unsigned int)CG_BulletHitEvent);
 
     // Make tracers visible also for 1st person view
     //patch_byte(0x004d7a91, 0x74); // Always jump
@@ -299,9 +182,6 @@ void drawing_patch() {
 
     // Improve DirectX error message
     patch_int32(0x0040fcf5 + 4, (unsigned int)Sys_DirectXFatalError);
-
-    patch_call(0x004055cb, (unsigned int)CL_AddConsoleText);
-    patch_call(0x00405726, (unsigned int)CL_AddConsoleText);
 
     // Patch end view func
     patch_call(0x00414a8c, (unsigned int)drawing_end);

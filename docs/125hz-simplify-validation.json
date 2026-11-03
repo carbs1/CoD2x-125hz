@@ -58,5 +58,27 @@
       "sha256": "ce67f03e5c31fc49cd14621b4426ec1c464b88c13b0fb3c362d95e3a5dc045b1",
       "bytes": 10071564
     }
+  },
+  "main_integration": {
+    "main_commit": "28f6cfe",
+    "windows32_x87_ctest": "4/4 passed",
+    "linux32_x87_ctest": "4/4 passed",
+    "native_timer_fixtures": 60,
+    "server_plans": {
+      "windows": 41,
+      "linux": 40,
+      "unchanged_after_normalizing_branch_addresses": true
+    },
+    "connected_gameplay_rerun": false,
+    "artifacts": {
+      "mss32.build.dll": {
+        "sha256": "d2917997349a652b8b14ac42480999bdab34a1da60e9cf86130c2c2259871ccb",
+        "bytes": 6478350
+      },
+      "libCoD2x.so": {
+        "sha256": "6abbbfbb8f964ca184b873971d125eaf816bb3bf874793c7a61febd21f64a9e6",
+        "bytes": 11166608
+      }
+    }
   }
 }

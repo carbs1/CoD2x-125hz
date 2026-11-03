@@ -5,6 +5,13 @@ Baseline: carbs1/CoD2x-125hz `combined-1.4.6.8`, experimental tag
 The repository's main branch does not contain those experimental changes.
 Corrections are isolated on `fix/125hz-timing-and-capsules`.
 
+The PR to `main` includes the original experiment as well as our fixes.
+`capsule_hitboxes.cpp`, `capsule_models.cpp`, `capsule_trace.cpp` and the fitting
+tool were introduced by `6265e92`; they were not all newly authored in this
+review. Commits `be4f197` and `a5c84e9` isolate the review fixes and simplification.
+The new history modules hold network delta bases, not an added display delay or
+a change to the anti-lag policy.
+
 ## Corrected
 
 | Area | Original issue | Result |
@@ -118,3 +125,9 @@ replays pass. An offline comparison of the three server planners matches all
 41 Windows and 40 Linux patch sites after normalizing address-dependent branch
 displacements. This pass launched no game and changed no live server.
 See [125hz-simplify-validation.json](125hz-simplify-validation.json).
+
+The PR branch was then reconciled with `main` at `28f6cfe`, retaining its newer
+CI/symbol generation, crash diagnostics, text and IP-hiding changes. Both merged
+builds pass all four CTest suites; x86/turret replays and the normalized server
+patch-plan comparison also pass. No new connected-gameplay run was performed
+for that merge.
