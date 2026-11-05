@@ -11,6 +11,8 @@
 
 // Toggle for custom pellet distribution (true) vs original random spread (false)
 dvar_t* g_shotgun_spread_fix;
+// 125 Hz fork: whether the fixed patterns are turned by a random angle on every shot (true, as CoD2x does) or always fired upright (false)
+dvar_t* g_shotgun_spread_rotation;
 
 
 
@@ -75,6 +77,49 @@ void CalculatePelletPosition_8Pellets(int pelletIdx, float rotationAngle, int va
     float baseY = pattern[pelletIdx][1];
     
     // Apply rotation
+    float cosTheta = cosf(rotationAngle);
+    float sinTheta = sinf(rotationAngle);
+
+    *outX = baseX * cosTheta - baseY * sinTheta;
+    *outY = baseX * sinTheta + baseY * cosTheta;
+}
+
+/**
+ * 125 Hz fork: a 24-pellet pattern (ClauDe2, 2026-11-04). Equal-area rings: one pellet in the middle, 7 at sqrt(4.5/24) of the cone's radius
+ * (one straight down) and 16 at sqrt(16/24) (four on the axes), so every pellet covers the same share of the cone.
+ */
+void CalculatePelletPosition_24Pellets(int pelletIdx, float rotationAngle, float* outX, float* outY)
+{
+    static const float pattern[24][2] = {
+        {  0.0000f,  0.0000f },
+        {  0.0000f, -0.4330f },
+        {  0.3385f, -0.2700f },
+        {  0.4222f,  0.0964f },
+        {  0.1879f,  0.3901f },
+        { -0.1879f,  0.3901f },
+        { -0.4222f,  0.0964f },
+        { -0.3385f, -0.2700f },
+        {  0.0000f, -0.8165f },
+        {  0.3125f, -0.7543f },
+        {  0.5774f, -0.5774f },
+        {  0.7543f, -0.3125f },
+        {  0.8165f,  0.0000f },
+        {  0.7543f,  0.3125f },
+        {  0.5774f,  0.5774f },
+        {  0.3125f,  0.7543f },
+        {  0.0000f,  0.8165f },
+        { -0.3125f,  0.7543f },
+        { -0.5774f,  0.5774f },
+        { -0.7543f,  0.3125f },
+        { -0.8165f,  0.0000f },
+        { -0.7543f, -0.3125f },
+        { -0.5774f, -0.5774f },
+        { -0.3125f, -0.7543f }
+    };
+
+    float baseX = pattern[pelletIdx][0];
+    float baseY = pattern[pelletIdx][1];
+
     float cosTheta = cosf(rotationAngle);
     float sinTheta = sinf(rotationAngle);
 
@@ -171,14 +216,14 @@ void G_BulletFireSpread(gentity_t* weaponEnt, gentity_t* attacker, weaponParms* 
     float minDamageRange = wp->weapDef->minDamageRange;
     
     // CoD2x start
-    // Check if custom pellet spread is enabled and weapon is a shotgun (8 pellets)
-    if (g_shotgun_spread_fix->value.boolean && shotCount == 8)
+    // Check if custom pellet spread is enabled and weapon is a shotgun (8 pellets; 125 Hz fork: or 24, one pattern)
+    if (g_shotgun_spread_fix->value.boolean && (shotCount == 8 || shotCount == 24))
     {
         // Compute aim offset radius once (converts angular spread to world distance)
         float aimOffset = tanf(spread * RADINDEG) * minDamageRange;
 
-        // Generate random rotation angle once per shot group (0 to 2π)
-        float rotationAngle = (shotCount == 8) ? (randomf() * 2.0f * M_PI) : 0.0f;
+        // Generate random rotation angle once per shot group (0 to 2π); 125 Hz fork: none when g_shotgun_spread_rotation is off
+        float rotationAngle = g_shotgun_spread_rotation->value.boolean ? (randomf() * 2.0f * M_PI) : 0.0f;
 
         // Randomly choose between 2 patterns
         int patternVariant = (randomf() < 0.5f) ? 0 : 1;
@@ -189,7 +234,10 @@ void G_BulletFireSpread(gentity_t* weaponEnt, gentity_t* attacker, weaponParms* 
             vec3_t end;
             float pelletX, pelletY;
 
-            CalculatePelletPosition_8Pellets(i, rotationAngle, patternVariant, &pelletX, &pelletY);
+            if (shotCount == 24)
+                CalculatePelletPosition_24Pellets(i, rotationAngle, &pelletX, &pelletY);
+            else
+                CalculatePelletPosition_8Pellets(i, rotationAngle, patternVariant, &pelletX, &pelletY);
 
             // Transform 2D pattern coords to 3D world space using weapon orientation
             // Formula: end = muzzleTrace + forward*range + right*x*radius + up*y*radius
@@ -247,6 +295,8 @@ void weapons_unload()
 void weapons_init()
 {
 	g_shotgun_spread_fix = Dvar_RegisterBool("g_shotgun_spread_fix", true, (enum dvarFlags_e)(DVAR_CHEAT | DVAR_CHANGEABLE_RESET));
+	// 125 Hz fork: not cheat protected, so a mod can turn the rotation off for its own patterns
+	g_shotgun_spread_rotation = Dvar_RegisterBool("g_shotgun_spread_rotation", true, (enum dvarFlags_e)(DVAR_CHANGEABLE_RESET));
 }
 
 
