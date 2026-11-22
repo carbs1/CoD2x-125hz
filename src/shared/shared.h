@@ -36,7 +36,8 @@
 #endif
 #define FORK_DOWNLOAD_URL FORK_REPO_URL "/releases/download/"
 // Clients and servers of this fork must have the same number. Increase it when a change needs both updated
-#define FORK_PROTOCOL 1
+// 2: build 5 (fixed movement steps, grenade throw speed: the client must predict what the server does)
+#define FORK_PROTOCOL 2
 // Crash and error reports are only saved on this computer. The official CoD2x developers don't maintain this build,
 // so its reports must not reach their telemetry server
 #define FORK_TELEMETRY 0

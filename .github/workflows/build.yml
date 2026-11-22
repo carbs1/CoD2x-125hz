@@ -147,9 +147,12 @@ jobs:
             "$BUILD" "$PROTOCOL" "$VERSION" "$BASE" "$WIN_SHA" "$BASE" "$LINUX_SHA" > out/update.json
           cat out/update.json
       - name: Generate release notes
+        # A written page for the tag in .github/release-notes/<tag>.md when there is one, otherwise the commit subjects since the last tag
         run: |
           PREV="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
-          if [ -n "$PREV" ]; then
+          if [ -f ".github/release-notes/${GITHUB_REF_NAME}.md" ]; then
+            cp ".github/release-notes/${GITHUB_REF_NAME}.md" notes.md
+          elif [ -n "$PREV" ]; then
             git log "$PREV".."${GITHUB_REF_NAME}" --pretty='- %s' --no-merges > notes.md
           else
             git log "${GITHUB_REF_NAME}" --pretty='- %s' --no-merges > notes.md
