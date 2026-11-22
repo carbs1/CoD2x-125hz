@@ -8,8 +8,12 @@
 
 
 int competitive_clientStateLast = 0;
+// 125 Hz fork: the player's own com_maxfps above the limit, put back when a server allows it again (it is saved in the config,
+// so without this a cap of 500 set for a server with fixed movement steps would stay 250 after a visit to one without)
+static int competitive_wantedMaxFps = 0;
 
 extern dvar_t* g_competitive;
+extern dvar_t* g_pmoveFixedMsec;
 
 
 void competitive_cmd_wait() {
@@ -32,8 +36,11 @@ void competitive_cmd_wait() {
 void competitive_frame() {
 
     // Competitive settings - cvar that controls all other limits via one cvar
-    if (g_competitive->modified) {
+    // 125 Hz fork: also when the server's fixed movement steps change, which lift the FPS limit
+    if (g_competitive->modified || (g_pmoveFixedMsec && g_pmoveFixedMsec->modified)) {
         g_competitive->modified = false;
+        if (g_pmoveFixedMsec)
+            g_pmoveFixedMsec->modified = false;
 
         // If demo is playing, ignore competitive settings
         // The cvar will be controled by MOD (like zPAM) on the server, we don't want to limit things when replaying the demo
@@ -53,22 +60,31 @@ void competitive_frame() {
         // Apply competitive settings
         if (g_competitive->value.boolean) {
             
-            // FPS: set the upper and lower limits
+            // FPS: set the upper and lower limits. 125 Hz fork: up to 1000 when the server moves everyone in fixed steps
+            // (g_pmoveFixedMsec), where the frame rate no longer changes speed, jumps or footsteps (movement.cpp)
+            int maxFps = (g_pmoveFixedMsec && g_pmoveFixedMsec->value.integer > 0) ? 1000 : 250;
             com_maxFps->limits.integer.min = 125;
-            com_maxFps->limits.integer.max = 250;
-            if (com_maxFps->value.integer < 125 || com_maxFps->value.integer > 250) {
-                Dvar_SetInt(com_maxFps, 250); // it will also set the latched value
+            com_maxFps->limits.integer.max = maxFps;
+            if (com_maxFps->value.integer > maxFps)
+                competitive_wantedMaxFps = com_maxFps->value.integer;
+            else if (competitive_wantedMaxFps > com_maxFps->value.integer && competitive_wantedMaxFps <= maxFps) {
+                Dvar_SetInt(com_maxFps, competitive_wantedMaxFps);
+                competitive_wantedMaxFps = 0;
+            }
+            if (com_maxFps->value.integer < 125 || com_maxFps->value.integer > maxFps) {
+                Dvar_SetInt(com_maxFps, com_maxFps->value.integer < 125 ? 250 : maxFps); // it will also set the latched value
             }
 
-            // Rate    
-            rate->limits.integer.min = 25000;
-            if (rate->value.integer != 25000) {
-                Dvar_SetInt(rate, 25000);
+            // Rate and snaps: 125 Hz fork, the most this build allows (100000 and 125, CoD2x: 25000 and 40), what its servers send
+            // anyway with sv_minRate and sv_minSnaps; the console shows what the player gets. A server that allows less limits it itself
+            rate->limits.integer.min = 100000;
+            if (rate->value.integer != 100000) {
+                Dvar_SetInt(rate, 100000);
             }
             // Snaps
-            snaps->limits.integer.min = 40;
-            if (snaps->value.integer != 40) {
-                Dvar_SetInt(snaps, 40);
+            snaps->limits.integer.min = 125;
+            if (snaps->value.integer != 125) {
+                Dvar_SetInt(snaps, 125);
             }
             // cl_maxpackets
             cl_maxpackets->limits.integer.min = 125;
@@ -103,6 +119,10 @@ void competitive_frame() {
             // FPS
             com_maxFps->limits.integer.min = 0;
             com_maxFps->limits.integer.max = 1000;
+            if (competitive_wantedMaxFps > com_maxFps->value.integer) {     // 125 Hz fork: the player's own cap again
+                Dvar_SetInt(com_maxFps, competitive_wantedMaxFps);
+                competitive_wantedMaxFps = 0;
+            }
             // Rate
             rate->limits.integer.min = 1000;
             // Snaps

@@ -44,6 +44,8 @@ dvar_t*		showpacketstrings;
 dvar_t*		sv_playerBroadcastLimit;
 int 		nextIPTime = 0;
 dvar_t*		g_competitive;
+dvar_t*		g_radarPlayerColors;
+dvar_t*		g_radarEnemyPings;
 dvar_t*		sv_hideServerIp;
 bool		server_ignoreMapChangeThisFrame = false;
 
@@ -1302,6 +1304,66 @@ void SV_Shutdown(const char* error) {
 
 
 
+/**
+ * 125 Hz fork: colors of the players on the radar compass, the same for everyone. A player gets a color when joining a team:
+ * the one asked for with the client cvar cg_hudRadarPlayerColor (1 blue, 2 green, 3 orange, 4 purple, 5 yellow, sent in the
+ * userinfo), or a random free one when it is taken or none is asked for. The colors go to the clients in the systeminfo cvar
+ * g_radarPlayerColors, one digit for each client slot, 0 = no color.
+ */
+static void server_radarPlayerColorsFrame()
+{
+	static team_t lastTeam[MAX_CLIENTS];
+	static char colors[MAX_CLIENTS + 1];
+
+	int maxClients = sv_maxclients->value.integer;
+	if (maxClients > MAX_CLIENTS)
+		maxClients = MAX_CLIENTS;
+	if (colors[0] == '\0')
+		memset(colors, '0', MAX_CLIENTS);
+
+	for (int i = 0; i < MAX_CLIENTS; i++)
+	{
+		team_t team = TEAM_NONE;
+		if (i < maxClients && svs_clients[i].state >= CS_CONNECTED && level_bgs_server.clientinfo[i].infoValid)
+			team = level_bgs_server.clientinfo[i].team;
+		if (team == lastTeam[i])
+			continue;
+
+		lastTeam[i] = team;
+		colors[i] = '0';
+		if (team != TEAM_ALLIES && team != TEAM_AXIS)
+			continue;
+
+		bool taken[6] = {false};
+		for (int j = 0; j < MAX_CLIENTS; j++) {
+			if (j != i && lastTeam[j] == team)
+				taken[colors[j] - '0'] = true;
+		}
+
+		int preferred = atoi(Info_ValueForKey(svs_clients[i].userinfo, "cg_hudRadarPlayerColor"));
+		if (preferred >= 1 && preferred <= 5 && !taken[preferred]) {
+			colors[i] = '0' + preferred;
+			continue;
+		}
+
+		int free[5];
+		int freeCount = 0;
+		for (int c = 1; c <= 5; c++) {
+			if (!taken[c])
+				free[freeCount++] = c;
+		}
+		// More than 5 players in the team: colors are shared
+		colors[i] = '0' + (freeCount > 0 ? free[rand() % freeCount] : 1 + rand() % 5);
+	}
+
+	colors[maxClients] = '\0';
+	if (strcmp(g_radarPlayerColors->value.string, colors) != 0)
+		Dvar_SetString(g_radarPlayerColors, colors);
+	colors[maxClients] = '0';
+}
+
+
+
 void G_RunFrame(int time) {
 	// CoD2x: game values that depend on sv_fps
 	tickrate_frame();
@@ -1311,6 +1373,9 @@ void G_RunFrame(int time) {
     ASM_CALL(RETURN_VOID, ADDR(0x004fd1b0, 0x0810a13a), WL(0, 1), WL(EAX, PUSH)(time));
 
 	server_ignoreMapChangeThisFrame = false;
+
+	// 125 Hz fork: colors of the players on the radar compass
+	server_radarPlayerColorsFrame();
 
 	// Update rate limiter statistics (request count and unique IPs in last second)
 	SVC_UpdateRateLimiterStats();
@@ -1394,6 +1459,12 @@ void server_init()
 	// Sets limits on client side for competitive settings
 	dvarFlags_e noWriteForClientFlag = (dedicated->value.integer == 0) ? DEBUG_RELEASE(DVAR_CHEAT, DVAR_NOWRITE) : DVAR_NOFLAG;
 	g_competitive = Dvar_RegisterBool("g_competitive", false, (enum dvarFlags_e)(noWriteForClientFlag | DVAR_SYSTEMINFO | DVAR_CHANGEABLE_RESET));
+
+	// 125 Hz fork: colors of the players on the radar compass, set by the server, see server_radarPlayerColorsFrame
+	g_radarPlayerColors = Dvar_RegisterString("g_radarPlayerColors", "", (enum dvarFlags_e)(noWriteForClientFlag | DVAR_SYSTEMINFO | DVAR_CHANGEABLE_RESET));
+
+	// 125 Hz fork: 0 hides the red dots of enemies that fire on the radar of every player, 1 leaves it to each player's cg_hudRadarEnemyPings
+	g_radarEnemyPings = Dvar_RegisterBool("g_radarEnemyPings", true, (enum dvarFlags_e)(noWriteForClientFlag | DVAR_SYSTEMINFO | DVAR_CHANGEABLE_RESET));
 
 
 	tickrate_init();

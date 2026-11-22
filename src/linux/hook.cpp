@@ -7,6 +7,7 @@
 #include "../shared/cod2_common.h"
 #include "../shared/common.h"
 #include "../shared/weapons.h"
+#include "../shared/fixedmove.h"
 #include "../shared/server.h"
 #include "../shared/dvar.h"
 #include "../shared/game.h"
@@ -46,6 +47,7 @@ void hook_SV_Init() {
     // Shared & Server
     common_init();
     weapons_init();
+    fixedmove_init();    // 125 Hz fork: g_pmoveFixedMsec
     server_init();
     dvar_init();
     updater_init();
@@ -94,6 +96,7 @@ bool hook_patch() {
 
 
     weapons_patch();
+    fixedmove_patch();   // 125 Hz fork: movement in fixed steps (g_pmoveFixedMsec)
     common_patch();
     server_patch();
     game_patch();

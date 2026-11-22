@@ -10,6 +10,7 @@
 #include "registry.h"
 #include "url_protocol.h"
 #include "affinity.h"
+#include "timer.h"
 #include "hotreload.h"
 #include "exception.h"
 #include "freeze.h"
@@ -28,6 +29,9 @@
 #include "error.h"
 #include "downloading.h"
 #include "demo.h"
+#include "fxlimit.h"
+#include "movement.h"
+#include "../shared/fixedmove.h"
 #include "vmix.h"
 #include "debug.h"
 #include "module_detection.h"
@@ -98,6 +102,7 @@ void hook_Com_Frame()
                 radar_unload();
                 demo_unload();
                 text_unload();
+                fxlimit_unload();
 
                 hotreload_loadDLL();
                 hook_insideComFrame = false;
@@ -109,12 +114,14 @@ void hook_Com_Frame()
     // Only for client
     if (dedicated->value.integer == 0) {
         text_frame();
+        fxlimit_frame();
         competitive_frame();
         cgame_frame();
     }
 
     // Shared & Server
     exception_frame();
+    timer_frame();
     module_detection_frame();
     debug_frame();
     freeze_frame();
@@ -241,6 +248,8 @@ void hook_SV_Init() {
     // Shared & Server 
     freeze_init();
     weapons_init();
+    fixedmove_init();    // 125 Hz fork: g_pmoveFixedMsec
+    movement_init();     // 125 Hz fork: cl_pmoveSmooth
     common_init();
     server_init();
     dvar_init();
@@ -270,6 +279,7 @@ void hook_Com_Init(const char* cmdline) {
     exception_init();   // sending thru NET will work after Com_Init is called and updater is initialized
     module_detection_init();
     affinity_init();
+    timer_init();       // 125 Hz fork: 0.5 ms timer resolution for steady frame times
     debug_init();
     admin_init();      // Must be called before file system initialization
     registry_init();   // Must be called before cdkey registry reading
@@ -338,6 +348,10 @@ bool hook_patch() {
     vmix_patch();
 
     weapons_patch();
+    fxlimit_patch();     // 125 Hz fork: more effect pieces at once
+    fixedmove_patch();   // 125 Hz fork: movement in fixed steps (g_pmoveFixedMsec)
+    movement_patch();    // 125 Hz fork: the view between fixed steps (cl_pmoveSmooth)
+    timer_patch();       // 125 Hz fork: exact frame caps (com_maxfpsPrecise)
     // Patch server side
     common_patch();
     server_patch();

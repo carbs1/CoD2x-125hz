@@ -57,6 +57,20 @@ code retains references to its relocated storage and hooks.
   enabling this option.
 - `cl_interpDelay` retains its configurable 30 ms default. Buffering trades
   responsiveness for stability; it is separate from snapshot storage capacity.
+- Player movement runs when a client's packets arrive, not on server frames, so
+  at 8 ms snapshots a moving player's raw position often does not change between
+  two snapshots and then jumps two steps (about 20% zero-length steps in the
+  2026-11-04 playtest demos).
+  - `BG_RunLerpFrameRate` derives the leg animation speed from that raw position
+    on every snapshot, so it sat at its 0.1 floor 44% of the time and peaked at
+    2.4x. `cl_animSpeedWindow` (50 ms) measures it over at least 50 ms like at 20
+    snaps: 9% at the floor, 95th percentile 1.7x on the same demo.
+  - `g_smoothClients` extrapolates a player from the command time to the
+    snapshot time, but only by up to 50 ms (`trDuration`), and the commands were
+    40-90 ms old. Above 20 FPS the limit is 100 ms. Replayed on the demo data, the
+    middle 90% of snapshot steps went from 0.00-2.06x to 0.54-1.62x of the
+    player's speed, and the median distance from the real path from 1.8 to 1.0
+    units (95th percentile 7.3 to 4.3). Not yet measured on a live server.
 - A mod or ruleset can override `sv_fps`. Check the active value after it loads.
   `sv_minSnaps` and `sv_minRate` can raise older client preferences; they do not
   replace the need for a patched client or a suitable server `sv_maxRate`.

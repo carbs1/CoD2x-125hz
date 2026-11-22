@@ -8,6 +8,9 @@
 #include "../shared/cod2_cmd.h"
 #include "../shared/animation.h"
 #include "tickrate_history.h"
+#include "../shared/tickrate_patch.h"
+#include <math.h>
+#include <vector>
 
 
 
@@ -19,12 +22,17 @@
 #define cg_thirdperson                (*((dvar_t**)0x014b5bdc))
 #define cg_thirdPersonAngle           (*((dvar_t**)0x0166e024))
 #define cg_thirdPersonRange           (*((dvar_t**)0x0166baa0))
+#define bgs_client                    (*((bgs_t*)0x0151ad98))
 
 dvar_t* cg_thirdPersonMode;
 dvar_t* cl_hideServerIp;
 bool cgame_hideServerIp = false; // cl_hideServerIp or sv_hideServerIp of the connected server, updated every frame
 
 extern dvar_t* g_cod2x;
+extern dvar_t* g_grenadeMoveSpeedScale;
+extern dvar_t* g_pmoveFixedMsec;
+extern dvar_t* g_radarPlayerColors;
+extern dvar_t* g_radarEnemyPings;
 
 int cgame_clientStateLast = -1;
 bool cgame_demoPlayingLast = false;
@@ -62,6 +70,7 @@ void Cmd_Increase_Decrease() {
 }
 
 dvar_t* cl_interpDelay;
+dvar_t* cl_animSpeedWindow;
 
 // Adjusts the client's clock after a new snapshot. It aims one snapshot interval + 5 ms behind the newest snapshot and moves
 // by 1 or 2 ms per snapshot. Both are too tight at a high snapshot rate: at 125 snaps it is only 13 ms behind, so a little jitter
@@ -105,12 +114,248 @@ static void CL_AdjustTimeDelta()
     // CoD2x: End
 }
 
+dvar_t* cg_obituaryFilter;
+
+// The kill event's fields CG_Obituary reads: 004e03f0 CG_Obituary, eax = entityState_t*, "mov ecx, [eax+0x78]" (attacker),
+// victim at +0x74, weapon or cause at +0xa0
+static_assert(offsetof(entityState_t, otherEntityNum) == 0x74, "victim field moved");
+static_assert(offsetof(entityState_t, attackerEntityNum) == 0x78, "attacker field moved");
+
+/**
+ * Whether a kill goes into the kill feed. cg_obituaryFilter:
+ *   0 = every kill (the game's own behavior),
+ *   1 = only kills the local player made or died in (so "Killed by" stays too),
+ *   2 = only kills the local player made.
+ * The local player is the one whose game it is - in a demo, the player who recorded it, also while they watch someone else.
+ * Called from CG_Obituary_Filter below, before CG_Obituary; returning 0 skips the kill entirely.
+ */
+extern "C" int __cdecl cgame_obituaryShown(const entityState_t* es) {
+    const int mode = cg_obituaryFilter ? cg_obituaryFilter->value.integer : 0;
+    if (mode <= 0)
+        return 1;
+    const int me = cg.clientNum;
+    if (es->attackerEntityNum == me)
+        return 1;
+    return mode == 1 && es->otherEntityNum == me;
+}
+
+// Takes the place of the call to CG_Obituary in CG_EntityEvent (case EV_OBITUARY). CG_Obituary takes its arguments in registers
+// (eax = the event's entityState_t, edi = a second value), so this stub keeps eax, asks cgame_obituaryShown (which, as a cdecl
+// function, leaves edi alone), and then either continues into the original CG_Obituary - which returns straight to CG_EntityEvent -
+// or returns without it.
+extern "C" void CG_Obituary_Filter();
+__asm__(
+    ".globl _CG_Obituary_Filter\n"
+    "_CG_Obituary_Filter:\n"
+    "    pushl %eax\n"                      // keep the entity for CG_Obituary
+    "    pushl %eax\n"                      // argument of cgame_obituaryShown
+    "    call _cgame_obituaryShown\n"
+    "    addl $4, %esp\n"
+    "    testl %eax, %eax\n"
+    "    popl %eax\n"                       // the entity again (pop leaves the flags as they are)
+    "    jz 1f\n"
+    "    pushl $0x004e03f0\n"               // CG_Obituary
+    "    ret\n"
+    "1:\n"
+    "    ret\n"
+);
+
+dvar_t* cg_drawServerHud;
+
+/**
+ * Draws the HUD elements the server's scripts made (newHudElem / newClientHudElem: zPAM's round clock, team score, players-left
+ * counts, "Strat Time" ...), unless cg_drawServerHud is 0. They come to the client inside the snapshots, so a demo carries them and
+ * no menu file can hide them. The kill feed and the "You killed" / "Killed by" text are not HUD elements and stay.
+ * Takes the place of the three calls to CG_Draw2dHudElems (004ddff0, cdecl, one argument: 0 = drawn before the 2D HUD, 1 = after)
+ * in CG_Draw2D.
+ */
+extern "C" void __cdecl CG_Draw2dHudElems_Filter(int foreground) {
+    if (cg_drawServerHud && !cg_drawServerHud->value.boolean)
+        return;
+    ((void (__cdecl*)(int))0x004ddff0)(foreground);
+}
+
+
+/**
+ * 125 Hz fork: a smooth view while following a player and in demos (cl_followSmooth).
+ *
+ * The view then comes from the snapshots' player state, blended between two snapshots by snapshot time (CG_InterpolatePlayerState).
+ * But a player moves when his packets reach the server, not on its frames: at 8 ms snapshots the followed player's state did not move
+ * in 16% of the snapshots while he was moving, then jumped two steps (demo up_st_lib, 2026-11-18), so the view stopped and lurched.
+ * Each player state carries the time of the command it was made by (commandTime), so the view is blended between the player states
+ * around a time by their command time instead, drawn a steady delay behind: the largest lag between snapshot and command time of
+ * the last FOLLOW_LAG_WINDOW ms, plus FOLLOW_LAG_MARGIN, rising fast when packets come later and easing back slowly.
+ * Replayed on that demo at 250 FPS: frames that stood still while moving 16.3% -> 0%, about 9 ms later than the original view.
+ */
+dvar_t* cl_followSmooth;
+
+#define FOLLOW_SAMPLES      64
+#define FOLLOW_LAGS         128
+#define FOLLOW_LAG_WINDOW   250         // ms of snapshots whose largest lag sets the delay
+#define FOLLOW_LAG_MARGIN   2           // ms added to it
+#define FOLLOW_LAG_RISE     0.5f        // ms of delay added per ms when it must grow
+#define FOLLOW_LAG_FALL     0.05f       // ms of delay taken away per ms when it can shrink
+#define FOLLOW_TELEPORT     64.0f       // units between two player states that start a new history (spawn, switching player)
+
+struct followSample_t {
+    int commandTime;
+    vec3_t origin;
+    vec3_t velocity;
+    vec3_t viewangles;
+};
+struct followLag_t {
+    int serverTime;
+    int lag;
+};
+static followSample_t follow_samples[FOLLOW_SAMPLES];  // a ring, oldest to newest by command time
+static int follow_sampleCount = 0;
+static int follow_sampleNewest = -1;
+static followLag_t follow_lags[FOLLOW_LAGS];          // a ring of the snapshots' lags
+static int follow_lagCount = 0;
+static int follow_lagNewest = -1;
+static int follow_clientNum = -1;
+static int follow_lastServerTime = 0;
+static int follow_lastTime = 0;
+static float follow_delay = -1.0f;
+
+static void follow_reset() {
+    follow_sampleCount = 0;
+    follow_sampleNewest = -1;
+    follow_lagCount = 0;
+    follow_lagNewest = -1;
+    follow_clientNum = -1;
+    follow_lastServerTime = 0;
+    follow_delay = -1.0f;
+}
+
+static float follow_lerpAngle(float from, float to, float frac) {
+    float delta = to - from;
+    delta -= 360.0f * floorf((delta + 180.0f) / 360.0f);
+    return from + delta * frac;
+}
+
+static void follow_addSnapshot(const snapshot_t* snap) {
+    int serverTime = snap->pad[2];
+    const playerState_t* ps = &snap->ps;
+    if (serverTime <= follow_lastServerTime && follow_clientNum == ps->clientNum)
+        return;   // already added
+
+    if (follow_sampleCount > 0) {
+        const followSample_t* newest = &follow_samples[follow_sampleNewest];
+        float dx = ps->origin[0] - newest->origin[0], dy = ps->origin[1] - newest->origin[1], dz = ps->origin[2] - newest->origin[2];
+        if (ps->clientNum != follow_clientNum || ps->commandTime < newest->commandTime || serverTime - follow_lastServerTime > 500 ||
+            serverTime < follow_lastServerTime || dx * dx + dy * dy + dz * dz > FOLLOW_TELEPORT * FOLLOW_TELEPORT)
+            follow_reset();
+    }
+    follow_clientNum = ps->clientNum;
+    follow_lastServerTime = serverTime;
+
+    // A new player state only when the command time moved on
+    if (follow_sampleCount == 0 || ps->commandTime > follow_samples[follow_sampleNewest].commandTime) {
+        follow_sampleNewest = (follow_sampleNewest + 1) % FOLLOW_SAMPLES;
+        followSample_t* s = &follow_samples[follow_sampleNewest];
+        s->commandTime = ps->commandTime;
+        for (int i = 0; i < 3; i++) {
+            s->origin[i] = ps->origin[i];
+            s->velocity[i] = ps->velocity[i];
+            s->viewangles[i] = ps->viewangles[i];
+        }
+        if (follow_sampleCount < FOLLOW_SAMPLES)
+            follow_sampleCount++;
+    }
+
+    follow_lagNewest = (follow_lagNewest + 1) % FOLLOW_LAGS;
+    follow_lags[follow_lagNewest].serverTime = serverTime;
+    follow_lags[follow_lagNewest].lag = serverTime - ps->commandTime;
+    if (follow_lagCount < FOLLOW_LAGS)
+        follow_lagCount++;
+}
+
+/** Takes the place of the call to CG_InterpolatePlayerState (004de7c0, cdecl, one argument: 1 = view angles from the local input) in CG_PredictPlayerState. */
+extern "C" void __cdecl CG_InterpolatePlayerState_Follow(int grabAngles) {
+    ((void (__cdecl*)(int))0x004de7c0)(grabAngles);
+
+    // Only where the view comes from the snapshots: in a demo or while following (CG_PredictPlayerState calls it with 0 then)
+    if (grabAngles || !cl_followSmooth || !cl_followSmooth->value.boolean || !cg.snap || !cg.nextSnap) {
+        follow_reset();
+        return;
+    }
+
+    follow_addSnapshot(cg.snap);
+    follow_addSnapshot(cg.nextSnap);
+    if (follow_sampleCount < 2 || follow_clientNum != cg.predictedPlayerState.clientNum)
+        return;
+
+    // The delay: the largest lag of the last FOLLOW_LAG_WINDOW ms of snapshots
+    int newestServerTime = follow_lags[follow_lagNewest].serverTime;
+    int target = 0;
+    for (int i = 0; i < follow_lagCount; i++) {
+        const followLag_t* l = &follow_lags[(follow_lagNewest - i + FOLLOW_LAGS) % FOLLOW_LAGS];
+        if (l->serverTime <= newestServerTime - FOLLOW_LAG_WINDOW)
+            break;
+        if (l->lag > target)
+            target = l->lag;
+    }
+    target += FOLLOW_LAG_MARGIN;
+
+    int frameMsec = cg.time - follow_lastTime;
+    if (frameMsec < 0) frameMsec = 0;
+    if (frameMsec > 50) frameMsec = 50;
+    follow_lastTime = cg.time;
+    if (follow_delay < 0.0f)
+        follow_delay = (float)target;
+    else if (target > follow_delay)
+        follow_delay = fminf((float)target, follow_delay + frameMsec * FOLLOW_LAG_RISE);
+    else
+        follow_delay = fmaxf((float)target, follow_delay - frameMsec * FOLLOW_LAG_FALL);
+
+    // The player states around that command time, the newest when it is not there yet
+    float time = (float)cg.time - follow_delay;
+    const followSample_t* older = NULL;
+    const followSample_t* newer = &follow_samples[follow_sampleNewest];
+    for (int i = 0; i < follow_sampleCount; i++) {
+        const followSample_t* s = &follow_samples[(follow_sampleNewest - i + FOLLOW_SAMPLES) % FOLLOW_SAMPLES];
+        if (s->commandTime <= time) {
+            older = s;
+            break;
+        }
+        newer = s;
+    }
+    float frac = 0.0f;
+    if (older == NULL)
+        older = newer;                              // all newer: the oldest
+    else if (older == &follow_samples[follow_sampleNewest])
+        newer = older;                              // not there yet: the newest
+    else
+        frac = (time - older->commandTime) / (float)(newer->commandTime - older->commandTime);
+
+    playerState_t* ps = &cg.predictedPlayerState;
+#ifdef FOLLOWSMOOTH_LOG
+    float before[3] = { ps->origin[0], ps->origin[1], ps->origin[2] };
+#endif
+    for (int i = 0; i < 3; i++) {
+        ps->origin[i] = older->origin[i] + (newer->origin[i] - older->origin[i]) * frac;
+        ps->velocity[i] = older->velocity[i] + (newer->velocity[i] - older->velocity[i]) * frac;
+        ps->viewangles[i] = follow_lerpAngle(older->viewangles[i], newer->viewangles[i], frac);
+    }
+#ifdef FOLLOWSMOOTH_LOG
+    // Test builds only: the original and the smoothed view origin of every frame
+    static FILE* log = fopen("followsmooth.log", "w");
+    if (log)
+        fprintf(log, "%d %d %.3f %.3f %.3f %.3f %.3f %.3f %.1f\n", cg.time, ps->clientNum, before[0], before[1], before[2],
+                ps->origin[0], ps->origin[1], ps->origin[2], follow_delay);
+#endif
+}
+
 /** Called only once on game start after common inicialization. Used to initialize variables, cvars, etc. */
 void cgame_init() {
     tickrate_history_init();
 
     // How far behind the newest snapshot other players are drawn, in ms. Changes nothing up to 40 snaps. 0 = original behavior
     cl_interpDelay = Dvar_RegisterInt("cl_interpDelay", 30, 0, 100, (enum dvarFlags_e)(DVAR_ARCHIVE | DVAR_CHANGEABLE_RESET));
+
+    // 125 Hz fork: how many ms of movement the leg animation speed of other players is measured over. 0 = every snapshot, the original behavior
+    cl_animSpeedWindow = Dvar_RegisterInt("cl_animSpeedWindow", 50, 0, 200, (enum dvarFlags_e)(DVAR_ARCHIVE | DVAR_CHANGEABLE_RESET));
 
     // Register USERINFO cvar that is automatically appended to the client's userinfo string sent to the server
     Dvar_RegisterInt("protocol_cod2x", APP_VERSION_PROTOCOL, APP_VERSION_PROTOCOL, APP_VERSION_PROTOCOL, (enum dvarFlags_e)(DVAR_USERINFO | DVAR_ROM));
@@ -125,6 +370,16 @@ void cgame_init() {
     // (console, menus, the connect command while typing), see Text_HideIpAddresses in text.cpp.
     // The server can enforce the same with sv_hideServerIp while the client is connected, no matter this setting.
     cl_hideServerIp = Dvar_RegisterBool("cl_hideServerIp", false, (enum dvarFlags_e)(DVAR_ARCHIVE | DVAR_CHANGEABLE_RESET));
+
+    // Which kills go into the kill feed (and the "You killed" / "Killed by" message), see cgame_obituaryShown
+    cg_obituaryFilter = Dvar_RegisterInt("cg_obituaryFilter", 0, 0, 2, (enum dvarFlags_e)(DVAR_ARCHIVE | DVAR_CHANGEABLE_RESET));
+
+    // 0 hides the HUD elements the server's scripts draw (zPAM's clock, score, players left ...), see CG_Draw2dHudElems_Filter
+    cg_drawServerHud = Dvar_RegisterBool("cg_drawServerHud", true, (enum dvarFlags_e)(DVAR_ARCHIVE | DVAR_CHANGEABLE_RESET));
+
+    // 125 Hz fork: a smooth view while following a player and in demos, see CG_InterpolatePlayerState_Follow. 0 = original behavior
+    cl_followSmooth = Dvar_RegisterBool("cl_followSmooth", true, (enum dvarFlags_e)(DVAR_ARCHIVE | DVAR_CHANGEABLE_RESET));
+
 
     Cmd_AddCommand("increase", Cmd_Increase_Decrease);
     Cmd_AddCommand("decrease", Cmd_Increase_Decrease);
@@ -144,6 +399,24 @@ void cgame_frame() {
     if (g_cod2x->value.integer > 0 && clientState != cgame_clientStateLast && clientState <= CLIENT_STATE_CONNECTED) {
         Dvar_SetInt(g_cod2x, 0);
         g_cod2x->modified = true;
+    }
+    // 125 Hz fork: the grenade walk speed comes from the server's systeminfo, which servers without this fork do not send.
+    // Reset it while connecting, the new server's gamestate arrives only after CLIENT_STATE_CONNECTED
+    if (g_grenadeMoveSpeedScale->value.decimal != 0 && clientState != cgame_clientStateLast && clientState < CLIENT_STATE_CONNECTED) {
+        Dvar_SetFloat(g_grenadeMoveSpeedScale, 0);
+    }
+    // 125 Hz fork: the radar colors of the players come from the server the same way
+    if (g_radarPlayerColors->value.string[0] != '\0' && clientState != cgame_clientStateLast && clientState < CLIENT_STATE_CONNECTED) {
+        Dvar_SetString(g_radarPlayerColors, "");
+    }
+    // 125 Hz fork: the server's rule for the radar's enemy dots too. Not while this game runs the server itself (devmap),
+    // whose scripts set it before the local player connects, and which does not send it to itself through systeminfo
+    if (!g_radarEnemyPings->value.boolean && !(sv_running && sv_running->value.boolean) && clientState != cgame_clientStateLast && clientState < CLIENT_STATE_CONNECTED) {
+        Dvar_SetBool(g_radarEnemyPings, true);
+    }
+    // 125 Hz fork: the server's fixed movement steps, sent the same way (also not while this game runs the server itself)
+    if (g_pmoveFixedMsec->value.integer != 0 && !(sv_running && sv_running->value.boolean) && clientState != cgame_clientStateLast && clientState < CLIENT_STATE_CONNECTED) {
+        Dvar_SetInt(g_pmoveFixedMsec, 0);
     }
     // Player just connected to 1.3 server (g_cod2x == 0)
     // Set the cvar modified so the text is printed in the console again below
@@ -191,6 +464,18 @@ void cgame_frame() {
     // IP addresses are hidden if the client enables cl_hideServerIp or the connected server sets sv_hideServerIp
     cgame_hideServerIp = cl_hideServerIp->value.boolean ||
         (clientState >= CLIENT_STATE_CONNECTED && Info_ValueForKey(CL_GetConfigString(CS_SERVERINFO), "sv_hideServerIp")[0] == '1');
+
+
+    // 125 Hz fork: BG_RunLerpFrameRate sets the leg animation speed of other players to the distance they moved since its last
+    // update divided by the time passed, and updates it whenever this snapshot time changes. At 125 snaps that is every 8 ms,
+    // in which a player moves by whole client packets, so the speed jumped between 0.1x and 2.5x. This time is used only there,
+    // so it advances in steps of cl_animSpeedWindow ms instead, like at the stock 20 snaps. The game's own copy is removed in cgame_patch.
+    static int animSpeedSnapshotTime = 0;
+    const int latestSnapshotTime = cg.latestSnapshotTime;
+    const int window = cl_animSpeedWindow->value.integer;
+    if (window == 0 || latestSnapshotTime < animSpeedSnapshotTime || latestSnapshotTime - animSpeedSnapshotTime >= window)
+        animSpeedSnapshotTime = latestSnapshotTime;
+    bgs_client.latestSnapshotTime = animSpeedSnapshotTime;
 
 
     cgame_clientStateLast = clientState;
@@ -326,6 +611,25 @@ void cgame_patch() {
     patch_call(0x004cfb27, (unsigned int)CG_OffsetThirdPersonView);
 
     patch_call(0x004031dc, (unsigned int)CL_AdjustTimeDelta); // CL_SetCGameTime
+
+    // 125 Hz fork: the snapshot time used for the leg animation speed is set in cgame_frame instead
+    patch_nop(0x004dfdde, 6); // 004dfdde  890d78f95c01  mov dword [bgs_client.latestSnapshotTime], ecx (inside CG_ProcessSnapshots)
+
+    // Kill feed filter (cg_obituaryFilter)
+    patch_call(0x004e1919, (unsigned int)CG_Obituary_Filter); // 004e1919  e8d2eaffff  call CG_Obituary (inside CG_EntityEvent, case EV_OBITUARY)
+
+    // Server HUD elements on/off (cg_drawServerHud): the three calls to CG_Draw2dHudElems inside CG_Draw2D
+    patch_call(0x004cbd46, (unsigned int)CG_Draw2dHudElems_Filter); // 004cbd46  e8a5220100  call CG_Draw2dHudElems (push 0)
+    patch_call(0x004cbd80, (unsigned int)CG_Draw2dHudElems_Filter); // 004cbd80  e86b220100  call CG_Draw2dHudElems (push 0)
+    patch_call(0x004cbd9f, (unsigned int)CG_Draw2dHudElems_Filter); // 004cbd9f  e84c220100  call CG_Draw2dHudElems (push 1)
+
+    // 125 Hz fork: smooth view while following and in demos (cl_followSmooth). Only changed while the call still holds its original bytes
+    {
+        std::vector<tickrate::Patch> plan;
+        tickrate::redirect(plan, 0x004def04, "follow view", {0xe8,0xb7,0xf8,0xff,0xff}, (const void*)&CG_InterpolatePlayerState_Follow); // call CG_InterpolatePlayerState
+        if (tickrate::verifyPatches(plan))
+            tickrate::applyPatches(plan);
+    }
 
     // Hook the function that returns the server address drawn at the bottom of the scoreboard,
     // so it can be hidden by the client cvar cl_hideServerIp or the serverinfo cvar sv_hideServerIp

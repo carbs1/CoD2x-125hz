@@ -40,6 +40,17 @@ dvar_t* cg_hudRadarOffsetY;
 dvar_t* cg_hudRadarPlayersNumberSwitch;
 dvar_t* cg_hudRadarColor;
 
+// 125 Hz fork: the radar in place of the compass
+dvar_t* cg_hudRadarCompass;
+dvar_t* cg_hudRadarCompassZoom;
+dvar_t* cg_hudRadarCompassRotate;
+dvar_t* cg_hudRadarCompassScale;
+dvar_t* cg_hudRadarPlayerColor;
+dvar_t* cg_hudRadarEnemyPings;
+extern dvar_t* g_radarPlayerColors;
+extern dvar_t* g_radarEnemyPings;
+
+
 char radar_lastMapName[64] = {0};
 
 int cg_hudRadarCalibrateState = 0;
@@ -538,11 +549,279 @@ void radar_draw()
 
 
 
+// ===========================================================================================
+// 125 Hz fork: radar in place of the compass
+// ===========================================================================================
+//
+// The map image of the streamer radar is drawn into the compass, with the same information as the compass:
+// the player, teammates, objectives and enemies that fired (fading like the compass sound pings). It is drawn
+// in real screen pixels from a view of the radar canvas, which is the streamer radar layout with its image
+// 100 x 100 units large, positions relative to the image center.
+
+struct RadarCompassView
+{
+    float centerX, centerY;     // center of the radar in real screen pixels
+    float radius;               // radius of the radar in real screen pixels
+    float pixelsPerUnit;        // real screen pixels per canvas unit
+    float viewX, viewY;         // canvas point in the center of the radar
+    float angle;                // turn of the canvas in degrees, clockwise
+    float cosAngle, sinAngle;
+    int rotation;               // turn of the map image in the canvas (cg_hudRadarMapImageRotation)
+};
+
+/** Turns a point by the radar file's image rotation (0, 90, 180, -90, -180), as compute_coordinates does. */
+static void Radar_Rotate90(float x, float y, int rotation, float* outX, float* outY)
+{
+    switch (rotation) {
+        case 90:            *outX = -y; *outY = x;  break;
+        case 180: case -180: *outX = -x; *outY = -y; break;
+        case -90:           *outX = y;  *outY = -x; break;
+        default:            *outX = x;  *outY = y;  break;
+    }
+}
+
+/** Position of a world point on the radar canvas, relative to the center of the map image. */
+static void Radar_CanvasFromWorld(const vec3_t origin, int rotation, float* outX, float* outY)
+{
+    float x = origin[0] * cg_hudRadarEntityScale->value.decimal + cg_hudRadarEntityOffsetX->value.decimal;
+    float y = -origin[1] * cg_hudRadarEntityScale->value.decimal + radar_height + cg_hudRadarEntityOffsetY->value.decimal;
+    Radar_Rotate90(x - radar_width / 2.0f, y - radar_height / 2.0f, rotation, outX, outY);
+}
+
+/** Position of a canvas point in real screen pixels, relative to the center of the radar. */
+static void Radar_ScreenFromCanvas(const RadarCompassView& view, float x, float y, float* outX, float* outY)
+{
+    x = (x - view.viewX) * view.pixelsPerUnit;
+    y = (y - view.viewY) * view.pixelsPerUnit;
+    *outX = x * view.cosAngle - y * view.sinAngle;
+    *outY = x * view.sinAngle + y * view.cosAngle;
+}
+
+/** Draws a material into the radar, centered at a canvas point. Hidden outside the radar, or kept at its edge. */
+static void Radar_DrawCompassIcon(const RadarCompassView& view, float canvasX, float canvasY, float size, float angle, const float* color, void* material, bool keepAtEdge)
+{
+    float x, y;
+    Radar_ScreenFromCanvas(view, canvasX, canvasY, &x, &y);
+    float distance = sqrtf(x * x + y * y);
+    if (distance > view.radius) {
+        if (!keepAtEdge)
+            return;
+        x *= view.radius / distance;
+        y *= view.radius / distance;
+    }
+    gfx_funcs_R_AddCmdDrawStretchPicRotate(view.centerX + x - size / 2, view.centerY + y - size / 2, size, size, 0, 0, 1, 1, angle, color, material);
+}
+
+/** Color of a player on the radar, as the server assigned it in g_radarPlayerColors. False when it has none (other servers). */
+static bool Radar_PlayerColor(int clientNum, vec4_t color)
+{
+    static const vec4_t colors[6] = {
+        { 1, 1, 1, 1 },
+        { 0.20f, 0.55f, 1.00f, 1 },     // 1 blue
+        { 0.25f, 0.85f, 0.25f, 1 },     // 2 green
+        { 1.00f, 0.55f, 0.10f, 1 },     // 3 orange
+        { 0.70f, 0.35f, 1.00f, 1 },     // 4 purple
+        { 1.00f, 0.90f, 0.15f, 1 },     // 5 yellow
+    };
+    const char* assigned = g_radarPlayerColors ? g_radarPlayerColors->value.string : "";
+    if (clientNum < 0 || clientNum >= (int)strlen(assigned))
+        return false;
+    int index = assigned[clientNum] - '0';
+    if (index < 1 || index > 5)
+        return false;
+    Vector4Copy(colors[index], color);
+    return true;
+}
+
+/** Draws the radar into the rectangle of the compass item of the HUD menu (640x480 screen, menu alignment). */
+void radar_drawCompass(float rectX, float rectY, float rectW, float rectH, int horzAlign, int vertAlign)
+{
+    if (!cg.snap)
+        return;
+
+    int rotation = cg_hudRadarMapImageRotation->value.integer;
+    float zoom = cg_hudRadarCompassZoom->value.decimal;
+
+    // Size and position: the round part of the compass picture, about 3/4 of its rectangle.
+    // The menus use a 640x480 screen that is scaled differently horizontally, the radar is drawn round with the vertical scale.
+    float radius = (rectW < rectH ? rectW : rectH) * 0.5f * 0.75f * cg_hudRadarCompassScale->value.decimal;
+    float pixelW = 1, pixelH = 1;
+    RadarCompassView view;
+    view.centerX = rectX + rectW / 2;
+    view.centerY = rectY + rectH / 2;
+    CalcScreenPlacement(&view.centerX, &view.centerY, &pixelW, &pixelH, horzAlign, vertAlign);
+    view.radius = radius * pixelH;
+    view.rotation = rotation;
+
+    // Kept on the screen when it is scaled up, measured from the edge the compass is aligned to
+    float edgeX = 0, edgeY = 0, edgeW = 0, edgeH = 0;
+    CalcScreenPlacement(&edgeX, &edgeY, &edgeW, &edgeH, horzAlign, vertAlign);
+    float margin = 4 * pixelH;
+    if (horzAlign == HORIZONTAL_ALIGN_LEFT && view.centerX < edgeX + view.radius + margin)
+        view.centerX = edgeX + view.radius + margin;
+    if (vertAlign == VERTICAL_ALIGN_BOTTOM && view.centerY > edgeY - view.radius - margin)
+        view.centerY = edgeY - view.radius - margin;
+
+    // Zoom 1 fits the whole map image into the radar, higher zooms follow the player
+    view.pixelsPerUnit = zoom * 2 * view.radius / (radar_width * 1.41421356f);
+    float playerX, playerY;
+    Radar_CanvasFromWorld(cg.refdef.vieworg, rotation, &playerX, &playerY);
+    float follow = zoom - 1;
+    if (follow < 0) follow = 0;
+    if (follow > 1) follow = 1;
+    view.viewX = playerX * follow;
+    view.viewY = playerY * follow;
+
+    // North up, or turned so the view direction of the player is up
+    float yaw = cg.refdefViewAngles[YAW];
+    view.angle = cg_hudRadarCompassRotate->value.boolean ? yaw - rotation - 90 : 0;
+    view.cosAngle = cosf(view.angle * (float)M_PI / 180.0f);
+    view.sinAngle = sinf(view.angle * (float)M_PI / 180.0f);
+
+    // Map image, in tiles so it can be cut to a circle when it is zoomed or turned. Tiles near the edge fade out.
+    // About 24 tiles fit across the radar. They touch without overlapping, the map image is see-through and overlaps would show as lines.
+    vec4_t mapColor = { 1, 1, 1, 1 };
+    if (cg_hudRadarColor->value.vec3) {
+        mapColor[0] = cg_hudRadarColor->value.vec3[0];
+        mapColor[1] = cg_hudRadarColor->value.vec3[1];
+        mapColor[2] = cg_hudRadarColor->value.vec3[2];
+    }
+    materialHandle_t* mapMaterial = CG_RegisterMaterialNoMip(cg_hudRadarMapImage->value.string, MATERIAL_TYPE_DEFAULT);
+    int tiles = (int)ceilf(radar_width * view.pixelsPerUnit * 12 / view.radius);
+    if (tiles < 8) tiles = 8;
+    if (tiles > 192) tiles = 192;
+    float tileUnits = (float)radar_width / tiles;
+    float tilePixels = tileUnits * view.pixelsPerUnit;
+    float fadeWidth = view.radius * 0.15f;
+    for (int i = 0; i < tiles; i++) {
+        for (int j = 0; j < tiles; j++) {
+            float canvasX, canvasY, x, y;
+            Radar_Rotate90((i + 0.5f) * tileUnits - radar_width / 2.0f, (j + 0.5f) * tileUnits - radar_height / 2.0f, rotation, &canvasX, &canvasY);
+            Radar_ScreenFromCanvas(view, canvasX, canvasY, &x, &y);
+            float distance = sqrtf(x * x + y * y);
+            if (distance >= view.radius)
+                continue;
+            vec4_t color = { mapColor[0], mapColor[1], mapColor[2], 1 };
+            if (distance > view.radius - fadeWidth)
+                color[3] = (view.radius - distance) / fadeWidth;
+            float size = tilePixels;
+            gfx_funcs_R_AddCmdDrawStretchPicRotate(view.centerX + x - size / 2, view.centerY + y - size / 2, size, size,
+                (float)i / tiles, (float)j / tiles, (float)(i + 1) / tiles, (float)(j + 1) / tiles,
+                rotation + view.angle, color, mapMaterial);
+        }
+    }
+
+    float iconSize = view.radius * 0.16f;
+
+    // Objectives, kept at the edge like on the compass
+    for (int i = 0; i < 0x10; i++) {
+        objective_s obj = cg.snap->ps.objective[i];
+        if (obj.state != 4) // 4 = active
+            continue;
+        vec3_t origin;
+        if (obj.entNum == 1023)
+            VectorCopy(obj.origin, origin);
+        else
+            VectorCopy(cg_entities[obj.entNum].lerpOrigin, origin);
+        materialHandle_t* shader = shaderObjective;
+        if (obj.icon > 0) {
+            char buffer[0x40];
+            if (CG_GetShaderConfigString(obj.icon, buffer, sizeof(buffer) - 1))
+                shader = CG_RegisterMaterialNoMip(buffer, MATERIAL_TYPE_DEFAULT);
+        }
+        float x, y;
+        Radar_CanvasFromWorld(origin, rotation, &x, &y);
+        Radar_DrawCompassIcon(view, x, y, iconSize, 0, colWhite, shader, true);
+    }
+
+    int clientNum = cg.snap->ps.clientNum;
+    int team = clientInfo[clientNum].team;
+    materialHandle_t* arrowMaterial = CG_RegisterMaterialNoMip("radar_player_arrow", MATERIAL_TYPE_DEFAULT);
+    materialHandle_t* circleMaterial = CG_RegisterMaterialNoMip("radar_player_circle", MATERIAL_TYPE_DEFAULT);
+
+    // Players are drawn at half the size of the objectives
+    float playerIconSize = iconSize * 0.5f;
+
+    // Enemies that fired, at the position the compass keeps for its sound ping, fading out in cg_hudCompassSoundPingFadeTime.
+    // Hidden with cg_hudRadarEnemyPings 0, or for everyone when the server sets g_radarEnemyPings 0
+    dvar_t* pingFadeTime = Dvar_GetDvarByName("cg_hudCompassSoundPingFadeTime");
+    float fadeTime = pingFadeTime && cg_hudRadarEnemyPings->value.boolean && g_radarEnemyPings->value.boolean ? pingFadeTime->value.decimal * 1000 : 0;
+    for (int i = 0; i < 64; i++) {
+        compassWeaponFire_t* ping = &cg.compassWeaponFireEndTime[i];
+        if (i == clientNum || !(ping->field_18 & 0xff) || fadeTime <= 0 || cg.time > ping->lastFireEndTime + fadeTime)
+            continue;
+        float alpha = 1;
+        if (cg.time > ping->lastFireEndTime)
+            alpha = 1 - (cg.time - ping->lastFireEndTime) / fadeTime;
+        vec3_t origin;
+        memcpy(&origin[0], &ping->x, sizeof(float));
+        memcpy(&origin[1], &ping->y, sizeof(float));
+        origin[2] = 0;
+        float x, y;
+        Radar_CanvasFromWorld(origin, rotation, &x, &y);
+        vec4_t color = { 1, 0.2f, 0.2f, alpha };
+        Radar_DrawCompassIcon(view, x, y, playerIconSize * 0.8f, 0, color, circleMaterial, false);
+    }
+
+    // Teammates
+    if (team == TEAM_ALLIES || team == TEAM_AXIS) {
+        dvar_t* teamColorDvar = Dvar_GetDvarByName(team == TEAM_ALLIES ? "g_TeamColor_Allies" : "g_TeamColor_Axis");
+        vec4_t teamColor;
+        Vector4Copy(colWhite, teamColor);
+        if (teamColorDvar) Dvar_StringToColor(teamColorDvar, &teamColor);
+        teamColor[3] = 1;
+        for (int i = 0; i < 64; i++) {
+            centity_t* cent = &cg_entities[i];
+            clientInfo_t* ci = &clientInfo[cent->currentState.clientNum];
+            if (i == clientNum || cent->currentState.eType != ET_PLAYER || (cent->currentState.eFlags & 1) || (cent->currentState.eFlags & 0x20000) ||
+                !(cent->currentValid & 1) || ci->infoValid != qtrue || ci->team != team)
+                continue;
+            float x, y;
+            Radar_CanvasFromWorld(cent->lerpOrigin, rotation, &x, &y);
+            float angle = 90 + rotation - cent->lerpAngles[YAW] + view.angle;
+            vec4_t playerColor;
+            if (Radar_PlayerColor(i, playerColor)) {
+                Radar_DrawCompassIcon(view, x, y, playerIconSize, angle, playerColor, arrowMaterial, false);
+                Radar_DrawCompassIcon(view, x, y, playerIconSize, angle, playerColor, circleMaterial, false);
+            } else {
+                Radar_DrawCompassIcon(view, x, y, playerIconSize, angle, colWhite, arrowMaterial, false);
+                Radar_DrawCompassIcon(view, x, y, playerIconSize, angle, teamColor, circleMaterial, false);
+            }
+        }
+    }
+
+    // The player, drawn last so teammates never cover it
+    float angle = 90 + rotation - yaw + view.angle;
+    vec4_t playerColor;
+    if (Radar_PlayerColor(clientNum, playerColor)) {
+        Radar_DrawCompassIcon(view, playerX, playerY, playerIconSize * 1.3f, angle, playerColor, arrowMaterial, true);
+        Radar_DrawCompassIcon(view, playerX, playerY, playerIconSize * 1.3f, angle, playerColor, circleMaterial, true);
+    } else {
+        Radar_DrawCompassIcon(view, playerX, playerY, playerIconSize * 1.3f, angle, colYellow, arrowMaterial, true);
+    }
+}
+
+/** The radar replaces the compass on maps with a radar file. */
+bool radar_compassActive()
+{
+    return cg_hudRadarCompass->value.boolean && cg_hudRadarMapImage->value.string[0] != '\0' && cg_hudRadarCalibrateState == 0;
+}
+
+
+
+
 /** Called every frame on frame start. */
 void radar_frame() {
+    // CoD2x: 125 Hz fork: mapName is set only when this game runs the server, a client on another server or playing a demo
+    // takes the map from the server info
+    const char* currentMapName = mapName;
+    if (currentMapName[0] == '\0' && clientState >= CLIENT_STATE_PRIMED)
+        currentMapName = Info_ValueForKey(CL_GetConfigString(CS_SERVERINFO), "mapname");
+    // CoD2x: End
+
     // Check for map change
-    if (strcmp(mapName, radar_lastMapName) != 0) {
-        strncpy(radar_lastMapName, mapName, sizeof(radar_lastMapName) - 1);
+    if (strcmp(currentMapName, radar_lastMapName) != 0) {
+        strncpy(radar_lastMapName, currentMapName, sizeof(radar_lastMapName) - 1);
         radar_lastMapName[sizeof(radar_lastMapName) - 1] = '\0';
 
         // No map name
@@ -553,10 +832,12 @@ void radar_frame() {
 
         const char* file = nullptr;
         // Read file
-        int i = FS_ReadFile(va("maps/mp/%s.radar", mapName), (void**)&file);
+        int i = FS_ReadFile(va("maps/mp/%s.radar", radar_lastMapName), (void**)&file);
 
         if (i <= 0 || !file) {
-            Com_Printf("^1Radar file not found: maps/%s.radar\n", mapName);
+            // CoD2x: 125 Hz fork: every player now looks for the file, most maps have none, so only in developer mode
+            Com_DPrintf("Radar file not found: maps/%s.radar\n", radar_lastMapName);
+            // CoD2x: End
             Dvar_SetString(cg_hudRadarMapImage, "");
             return;
         }
@@ -567,7 +848,7 @@ void radar_frame() {
         Com_Parse(&data); // skip header
         char* imageName = Com_Parse(&data);
         if (!imageName || imageName[0] == '\0') {
-            Com_Error(ERR_DROP, "Invalid image name in radar file: maps/%s.radar\n", mapName);
+            Com_Error(ERR_DROP, "Invalid image name in radar file: maps/%s.radar\n", radar_lastMapName);
             return;
         }
         char imageNameTemp[128];
@@ -577,7 +858,7 @@ void radar_frame() {
         Com_Parse(&data); // skip header
         char* entityScaleStr = Com_Parse(&data);
         if (!entityScaleStr || entityScaleStr[0] == '\0') {
-            Com_Error(ERR_DROP, "Invalid scale in radar file: maps/%s.radar\n", mapName);
+            Com_Error(ERR_DROP, "Invalid scale in radar file: maps/%s.radar\n", radar_lastMapName);
             return;
         }
         float entityScale = (float)atof(entityScaleStr);
@@ -585,7 +866,7 @@ void radar_frame() {
         Com_Parse(&data); // skip header
         char* entityOffsetXStr = Com_Parse(&data);
         if (!entityOffsetXStr || entityOffsetXStr[0] == '\0') {
-            Com_Error(ERR_DROP, "Invalid offsetX in radar file: maps/%s.radar\n", mapName);
+            Com_Error(ERR_DROP, "Invalid offsetX in radar file: maps/%s.radar\n", radar_lastMapName);
             return;
         }
         float entityOffsetX = (float)atof(entityOffsetXStr);
@@ -593,7 +874,7 @@ void radar_frame() {
         Com_Parse(&data); // skip header
         char* entityOffsetYStr = Com_Parse(&data);
         if (!entityOffsetYStr || entityOffsetYStr[0] == '\0') {
-            Com_Error(ERR_DROP, "Invalid offsetY in radar file: maps/%s.radar\n", mapName);
+            Com_Error(ERR_DROP, "Invalid offsetY in radar file: maps/%s.radar\n", radar_lastMapName);
             return;
         }
         float entityOffsetY = (float)atof(entityOffsetYStr);
@@ -601,7 +882,7 @@ void radar_frame() {
         Com_Parse(&data); // skip header
         char* rotationStr = Com_Parse(&data);
         if (!rotationStr || rotationStr[0] == '\0') {
-            Com_Error(ERR_DROP, "Invalid rotation in radar file: maps/%s.radar\n", mapName);
+            Com_Error(ERR_DROP, "Invalid rotation in radar file: maps/%s.radar\n", radar_lastMapName);
             return;
         }
         int rotation = atoi(rotationStr);
@@ -609,7 +890,7 @@ void radar_frame() {
         Com_Parse(&data); // skip header
         char* imageOffsetXStr = Com_Parse(&data);
         if (!imageOffsetXStr || imageOffsetXStr[0] == '\0') {
-            Com_Error(ERR_DROP, "Invalid imageOffsetX in radar file: maps/%s.radar\n", mapName);
+            Com_Error(ERR_DROP, "Invalid imageOffsetX in radar file: maps/%s.radar\n", radar_lastMapName);
             return;
         }
         float imageOffsetX = (float)atof(imageOffsetXStr);
@@ -617,7 +898,7 @@ void radar_frame() {
         Com_Parse(&data); // skip header
         char* imageOffsetYStr = Com_Parse(&data);
         if (!imageOffsetYStr || imageOffsetYStr[0] == '\0') {
-            Com_Error(ERR_DROP, "Invalid imageOffsetY in radar file: maps/%s.radar\n", mapName);
+            Com_Error(ERR_DROP, "Invalid imageOffsetY in radar file: maps/%s.radar\n", radar_lastMapName);
             return;
         }
         float imageOffsetY = (float)atof(imageOffsetYStr);
@@ -660,6 +941,18 @@ void radar_init() {
     cg_hudRadarPlayersNumberSwitch =    Dvar_RegisterBool  ("cg_hudRadarPlayersNumberSwitch",    false,             (enum dvarFlags_e)(DVAR_CHANGEABLE_RESET));
     cg_hudRadarColor =                  Dvar_RegisterVec3  ("cg_hudRadarColor",                  1, 1, 1, 0, 1,     (enum dvarFlags_e)(DVAR_CHANGEABLE_RESET));
 
+    // 125 Hz fork: radar in place of the compass on maps with a radar file. Zoom 1 shows the whole map, higher zooms follow the player.
+    // Rotate 0 keeps the map fixed, 1 turns it so the view direction is up. Scale changes the size of the compass.
+    cg_hudRadarCompass =                Dvar_RegisterBool  ("cg_hudRadarCompass", true,                             (enum dvarFlags_e)(DVAR_ARCHIVE | DVAR_CHANGEABLE_RESET));
+    cg_hudRadarCompassZoom =            Dvar_RegisterFloat ("cg_hudRadarCompassZoom", 1,        1,        8,        (enum dvarFlags_e)(DVAR_ARCHIVE | DVAR_CHANGEABLE_RESET));
+    cg_hudRadarCompassRotate =          Dvar_RegisterBool  ("cg_hudRadarCompassRotate", false,                      (enum dvarFlags_e)(DVAR_ARCHIVE | DVAR_CHANGEABLE_RESET));
+    cg_hudRadarCompassScale =           Dvar_RegisterFloat ("cg_hudRadarCompassScale", 1,       0.5f,     3,        (enum dvarFlags_e)(DVAR_ARCHIVE | DVAR_CHANGEABLE_RESET));
+    // 125 Hz fork: color asked for on the radar, sent to the server, which gives it when joining a team if no teammate has it.
+    // 0 = no preference, 1 = blue, 2 = green, 3 = orange, 4 = purple, 5 = yellow
+    cg_hudRadarPlayerColor =            Dvar_RegisterInt   ("cg_hudRadarPlayerColor", 0,        0,        5,        (enum dvarFlags_e)(DVAR_ARCHIVE | DVAR_USERINFO | DVAR_CHANGEABLE_RESET));
+    // 125 Hz fork: red dots where enemies fired, as the compass shows them. 0 hides them
+    cg_hudRadarEnemyPings =             Dvar_RegisterBool  ("cg_hudRadarEnemyPings", true,                          (enum dvarFlags_e)(DVAR_ARCHIVE | DVAR_CHANGEABLE_RESET));
+
 
     /*#if DEBUG
     Dvar_SetBool(cg_hudRadar, true);
@@ -669,5 +962,4 @@ void radar_init() {
 
 /** Called before the entry point is called. Used to patch the memory. */
 void radar_patch() {
-
 }

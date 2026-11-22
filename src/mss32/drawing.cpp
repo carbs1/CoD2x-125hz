@@ -56,6 +56,13 @@ void CG_DrawPlayerCompass(void* shader, vec4_t* color) {
     data->x += cg_hudCompassOffsetX->value.decimal;
     data->y += cg_hudCompassOffsetY->value.decimal;
 
+    // CoD2x: 125 Hz fork: on maps with a radar file the radar is drawn in place of the compass
+    if (radar_compassActive()) {
+        radar_drawCompass(data->x, data->y, data->w, data->h, data->horizontalAlign, data->verticalAlign);
+        return;
+    }
+    // CoD2x: End
+
     ASM_CALL(RETURN_VOID, 0x004c5400, 2, ESI(data), PUSH(shader), PUSH(color));
 }
 
@@ -64,6 +71,11 @@ void CG_DrawPlayerCompassObjectives(compass_hud_data* data, vec4_t* color) {
     
     if (!cg_drawCompass->value.boolean)
         return;
+
+    // CoD2x: 125 Hz fork: the radar in place of the compass shows the objectives itself
+    if (radar_compassActive())
+        return;
+    // CoD2x: End
 
     data->x += cg_hudCompassOffsetX->value.decimal;
     data->y += cg_hudCompassOffsetY->value.decimal;
@@ -75,7 +87,12 @@ void CG_DrawPlayerCompassObjectives(compass_hud_data* data, vec4_t* color) {
 void CG_DrawCompassFriendlies(compass_hud_data* data, vec4_t* color) {
     if (!cg_drawCompass->value.boolean)
         return;
-    
+
+    // CoD2x: 125 Hz fork: the radar in place of the compass shows the teammates and enemy sound pings itself
+    if (radar_compassActive())
+        return;
+    // CoD2x: End
+
     data->x += cg_hudCompassOffsetX->value.decimal;
     data->y += cg_hudCompassOffsetY->value.decimal;
 
@@ -88,6 +105,11 @@ void __cdecl CG_DrawPlayerCompassBack(void* shader, vec4_t* color) {
 
     if (!cg_drawCompass->value.boolean)
         return;
+
+    // CoD2x: 125 Hz fork: no compass background behind the radar
+    if (radar_compassActive())
+        return;
+    // CoD2x: End
 
     data->x += cg_hudCompassOffsetX->value.decimal;
     data->y += cg_hudCompassOffsetY->value.decimal;

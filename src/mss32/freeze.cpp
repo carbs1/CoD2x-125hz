@@ -124,6 +124,17 @@ void sub_004624a0()
 
 
 
+// 125 Hz fork: R_CreateRenderThread creates the render backend thread with the default stack size, which CoD2MP_s.exe sets
+// to only 64 KB. Overlays hook the end of the frame on this thread. OBS game capture, when OBS runs before the game starts,
+// creates a D3D11 device there, the NVIDIA driver puts a buffer of about 54 KB on the stack and the game crashed with a
+// stack overflow. Give the thread a 1 MB stack, the usual size for threads.
+static HANDLE WINAPI R_CreateRenderThread_CreateThread(LPSECURITY_ATTRIBUTES attributes, SIZE_T stackSize, LPTHREAD_START_ROUTINE startAddress, LPVOID parameter, DWORD flags, LPDWORD threadId)
+{
+    return CreateThread(attributes, 1024 * 1024, startAddress, parameter, flags | STACK_SIZE_PARAM_IS_A_RESERVATION, threadId);
+}
+
+
+
 /** Called every frame on frame start. */
 void freeze_frame() {
 
@@ -183,5 +194,9 @@ void freeze_patch() {
 
     //00410247  c78424e0010000a0244600  mov     dword [esp+0x1e0 {cod2_funcs[0x1d4].d}], waitForMainThread?
     patch_int32(0x00410247 + 7, (unsigned int)sub_004624a0);
+
+    // 125 Hz fork: create the render backend thread with a 1 MB stack
+    patch_call(0x00462448, (unsigned int)R_CreateRenderThread_CreateThread); // 00462448  ff1514325900  call dword [CreateThread] (inside R_CreateRenderThread)
+    patch_nop(0x0046244d, 1);
 }
 

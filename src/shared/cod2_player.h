@@ -760,4 +760,24 @@ inline void G_GetPlayerViewOrigin(gentity_s* ent, float* origin) {
 }
 
 
+// Moves the player one step: the time from ps->commandTime to pm->cmd.serverTime, with the command's view angles, buttons and
+// movement (view angles, crouch / prone, ground or air movement, weapon, footsteps, events), then rounds the velocity to
+// whole units (Sys_SnapVector) and sets ps->commandTime to cmd.serverTime. pm->oldcmd is the command before (button presses).
+// 0051a7a0    void PmoveSingle(struct pmove_t* pm)
+// 080e8934    void PmoveSingle(struct pmove_t* pm)
+inline void PmoveSingle(pmove_t* pm) {
+	ASM_CALL(RETURN_VOID, ADDR(0x0051a7a0, 0x080e8934), 1, PUSH(pm));
+}
+
+// Sets ps->viewangles from the command's angles plus ps->delta_angles, clamped where the player is limited (prone, mounted
+// weapons). frametime limits how far the view may turn there in this step; the client passes 0 when it only updates the
+// view for display (CG_InterpolatePlayerState). handler is pmove_t.handler.
+// 00519340    void PM_UpdateViewAngles(struct playerState_t* ps @ eax, float frametime, struct usercmd_t* cmd, uint8_t handler)
+// 080e6eb8    void PM_UpdateViewAngles(struct playerState_t* ps, float frametime, struct usercmd_t* cmd, uint8_t handler)
+inline void PM_UpdateViewAngles(playerState_t* ps, float frametime, usercmd_t* cmd, unsigned char handler) {
+	int handlerArg = handler;
+	ASM_CALL(RETURN_VOID, ADDR(0x00519340, 0x080e6eb8), WL(3, 4), WL(EAX, PUSH)(ps), PUSH(frametime), PUSH(cmd), PUSH(handlerArg));
+}
+
+
 #endif

@@ -6,7 +6,11 @@
 #include "cod2_math.h"
 #include "cod2_entity.h"
 #include "cod2_dvars.h"
+#include "cod2_player.h"
+#include "tickrate_patch.h"
 #include <math.h>
+#include <string.h>
+#include <vector>
 
 
 // Toggle for custom pellet distribution (true) vs original random spread (false)
@@ -16,15 +20,35 @@ dvar_t* g_shotgun_spread_rotation;
 
 
 
+// 125 Hz fork: walk speed scale from pulling the pin of a grenade to the end of the throw, 0 = the speed of the weapon in hand (original)
+dvar_t* g_grenadeMoveSpeedScale;
+
+
+
 struct WeaponDef
 {
     char padding1[0x1dc];
     int shotCount;          // offset 0x1dc
-    char padding2[0x3bc];
+    char padding2[0x84];
+    float moveSpeedScale;   // offset 0x264
+    char padding3[0x334];
     float minDamageRange;   // offset 0x59c
 };
 static_assert(offsetof(WeaponDef, shotCount) == WL(0x1dc, 0x1dc));
+static_assert(offsetof(WeaponDef, moveSpeedScale) == WL(0x264, 0x264));
 static_assert(offsetof(WeaponDef, minDamageRange) == WL(0x59c, 0x59c));
+static_assert(offsetof(playerState_t, weapon) == 0xd4);
+static_assert(offsetof(playerState_t, weaponstate) == 0xd8);
+
+// Weapon definitions by weapon index, the array BG_GetWeaponDef reads
+#define bg_weaponDefs ((WeaponDef**)ADDR(0x01728200, 0x086270a0))
+
+// Weapon states of a grenade throw (offhand), set by PM_Weapon_CheckForOffHand and the functions it continues with
+#define WEAPON_OFFHAND_INIT     12 // lowering the weapon
+#define WEAPON_OFFHAND_PREPARE  13 // pulling the pin
+#define WEAPON_OFFHAND_HOLD     14 // holding the grenade (cooking)
+#define WEAPON_OFFHAND_START    15 // throwing
+#define WEAPON_OFFHAND_END      16 // end of the throw, then the weapon is raised again
 
 struct weaponParms
 {
@@ -181,6 +205,26 @@ void Bullet_Endpos( float spread, vec3_t end, const weaponParms *wp, float maxRa
 
 
 /**
+ * 125 Hz fork: a bullet that hits the world makes an impact event (its sound and effect on every client), one per pellet: 182 for a small
+ * bullet, 183 for a rifle bullet (Bullet_Fire_Extended: 182 + rifleBullet). 24 pellets made three times the impact sounds of the 8-pellet
+ * shotgun at once, so a 24-pellet shot's world impacts are sent as event 181 instead, which every client already handles as the shotgun's
+ * own impact (CG_BulletHitEvent): the effects of iw_impacts.csv's shotgun_normal / shotgun_reflect (the stock files: the same as
+ * bullet_small's) and the sounds bulletspray_small_<surface> (the stock files: the same as bullet_small_<surface>), which a mod can make
+ * quieter without touching any other gun (ClauDe2 does). All 24 impacts are drawn; the pellets, their traces and damage are unchanged.
+ */
+static bool bullet_sprayImpactEvent = false;
+
+// 0050ff70    gentity_t* G_TempEntity(vec3_t origin, int event), called in Bullet_Fire_Extended for a world impact
+gentity_t* G_TempEntity_BulletImpact(vec3_t origin, int event)
+{
+    if (bullet_sprayImpactEvent && (event == 182 || event == 183))
+        event = 181;
+    gentity_t* ent;
+    ASM_CALL(RETURN(ent), ADDR(0x0050ff70, 0x0811efc4), 2, PUSH(origin), PUSH(event));
+    return ent;
+}
+
+/**
  * Wrapper for game's Bullet_Fire_Extended function.
  */
 void Bullet_Fire_Extended(gentity_t* source, gentity_t* attacker, vec3_t start, vec3_t end, float spread, 
@@ -246,7 +290,9 @@ void G_BulletFireSpread(gentity_t* weaponEnt, gentity_t* attacker, weaponParms* 
             VectorMA(end, pelletY * aimOffset, wp->up, end);
 
             // Fire bullet to calculated endpoint
+            bullet_sprayImpactEvent = shotCount == 24;    // 125 Hz fork: the shotgun's own impact event, see G_TempEntity_BulletImpact
             Bullet_Fire_Extended(weaponEnt, attacker, start, end, 1.0f, 0, wp, weaponEnt, gameTime);
+            bullet_sprayImpactEvent = false;
         }
     }
     // CoD2x end
@@ -261,7 +307,9 @@ void G_BulletFireSpread(gentity_t* weaponEnt, gentity_t* attacker, weaponParms* 
             Bullet_Endpos(spread, end, wp, minDamageRange, i);
             
             // Fire bullet
+            bullet_sprayImpactEvent = shotCount == 24;    // 125 Hz fork: the shotgun's own impact event, see G_TempEntity_BulletImpact
             Bullet_Fire_Extended(weaponEnt, attacker, start, end, 1.0f, 0, wp, weaponEnt, gameTime);
+            bullet_sprayImpactEvent = false;
         }
     }
 }
@@ -275,6 +323,51 @@ void __cdecl G_BulletFireSpread_Win32(gentity_t* weaponEnt, gentity_t* attacker,
     ASM(movr, wp, "eax");
     
     G_BulletFireSpread(weaponEnt, attacker, wp, gameTime, spread);
+}
+#endif
+
+
+
+
+
+/**
+ * Returns how fast the player walks, as a scale of the player's speed. Called by PM_WalkMove.
+ * The original multiplies it by moveSpeedScale of ps->weapon. A grenade is thrown with the other hand while ps->weapon stays
+ * the weapon the player held, so a throw ran as fast as that weapon: 1.1 with a pistol or the M1 Carbine, 0.9 with the BAR.
+ */
+// 00515990    float PM_CmdScale_Walk(pmove_t* pm @ eax, usercmd_t* cmd @ ebx)
+float PM_CmdScale_Walk(pmove_t* pm, usercmd_t* cmd)
+{
+    float scale;
+
+    // Call the original function
+    ASM_CALL(RETURN_ST0_FLOAT(scale), ADDR(0x00515990, 0x080e1c58), WL(0, 2), WL(EAX, PUSH)(pm), WL(EBX, PUSH)(cmd));
+
+    // CoD2x: 125 Hz fork: from pulling the pin to the end of the throw no weapon is in the hands,
+    // so g_grenadeMoveSpeedScale replaces the scale of the weapon
+    playerState_t* ps = pm->ps;
+    float grenadeScale = g_grenadeMoveSpeedScale->value.decimal;
+    if (grenadeScale > 0 && ps->weaponstate >= WEAPON_OFFHAND_PREPARE && ps->weaponstate <= WEAPON_OFFHAND_END)
+    {
+        float weaponScale = ps->weapon ? bg_weaponDefs[ps->weapon]->moveSpeedScale : 0.0f;
+        if (weaponScale > 0)
+            scale /= weaponScale;
+        scale *= grenadeScale;
+    }
+    // CoD2x: End
+
+    return scale;
+}
+
+#if COD2X_WIN32
+float PM_CmdScale_Walk_Win32()
+{
+    pmove_t* pm;
+    usercmd_t* cmd;
+    ASM(movr, pm, "eax");
+    ASM(movr, cmd, "ebx");
+
+    return PM_CmdScale_Walk(pm, cmd);
 }
 #endif
 
@@ -297,6 +390,12 @@ void weapons_init()
 	g_shotgun_spread_fix = Dvar_RegisterBool("g_shotgun_spread_fix", true, (enum dvarFlags_e)(DVAR_CHEAT | DVAR_CHANGEABLE_RESET));
 	// 125 Hz fork: not cheat protected, so a mod can turn the rotation off for its own patterns
 	g_shotgun_spread_rotation = Dvar_RegisterBool("g_shotgun_spread_rotation", true, (enum dvarFlags_e)(DVAR_CHANGEABLE_RESET));
+
+	// 125 Hz fork: servers use pistol speed while a grenade is thrown. The value is sent to clients for their movement prediction,
+	// clients keep 0 (original) until a server sends it and go back to 0 when they leave, see cgame_frame
+	bool server = COD2X_LINUX || dedicated->value.integer > 0;
+	dvarFlags_e noWriteForClientFlag = server ? DVAR_NOFLAG : DEBUG_RELEASE(DVAR_CHEAT, DVAR_NOWRITE);
+	g_grenadeMoveSpeedScale = Dvar_RegisterFloat("g_grenadeMoveSpeedScale", server ? 1.1f : 0.0f, 0.0f, 2.0f, (enum dvarFlags_e)(noWriteForClientFlag | DVAR_SYSTEMINFO | DVAR_CHANGEABLE_RESET));
 }
 
 
@@ -307,4 +406,17 @@ void weapons_patch()
 {
     // Hook G_BulletFireSpread to replace shotgun spread calculation
     patch_call(ADDR(0x00527baf, 0x081204d0), (unsigned int)WL(G_BulletFireSpread_Win32, G_BulletFireSpread));
+
+    // 125 Hz fork: walk speed while throwing a grenade
+    patch_call(ADDR(0x00516163, 0x080e268a), (unsigned int)WL(PM_CmdScale_Walk_Win32, PM_CmdScale_Walk)); // in PM_WalkMove
+
+    // 125 Hz fork: the world impact events of a bullet, see G_TempEntity_BulletImpact. Only changed while the call still holds its original bytes
+    std::vector<tickrate::Patch> plan;
+#if COD2X_WIN32
+    tickrate::redirect(plan, 0x005278c5, "bullet impact event", {0xe8,0xa6,0x86,0xfe,0xff}, (const void*)&G_TempEntity_BulletImpact);
+#else
+    tickrate::redirect(plan, 0x081200c8, "bullet impact event", {0xe8,0xf7,0xee,0xff,0xff}, (const void*)&G_TempEntity_BulletImpact);
+#endif
+    if (tickrate::verifyPatches(plan))
+        tickrate::applyPatches(plan);
 }

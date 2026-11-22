@@ -103,6 +103,12 @@ static void tickrate_apply(int msec, bool realtimeWait)
 	// G_RunItem: ent->s.pos.trDuration = 50
 	patch_int32(ADDR(0x005209f5 + 3, 0x08108092 + 3), msec);
 
+	// G_PlayerStateToEntityStateExtrapolate (g_smoothClients): ent->s.pos.trDuration = 50, how far clients extrapolate a player
+	// from their last command to the snapshot time. At 125 Hz the commands in a snapshot are 40 to 90 ms old (one-way latency
+	// plus cl_interpDelay), so the 50 ms limit cut most of it off and players moved as unevenly as their packets arrived.
+	// With 100 ms the steps in the playtest demos were even and the positions closer to where the players really were.
+	patch_int32(ADDR(0x004ff88a + 3, 0x080f5745 + 3), msec < 50 ? 100 : 50);
+
 	// Rates such as 30 use a 33 ms frame, so integer 1000/33 loses velocity.
 	tickrate_itemVelocityScale = 1000.0f / msec;
 	tickrate::frameMsec = msec;

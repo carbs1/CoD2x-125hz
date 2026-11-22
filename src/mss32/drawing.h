@@ -135,6 +135,24 @@ inline void UI_DrawHandlePic(float x, float y, float w, float h, int horizontalA
 }
 
 /**
+ * Converts a rectangle on the 640x480 screen of the menus to real screen pixels, in place.
+ * horzAlign and vertAlign are the HORIZONTAL_ALIGN_* / VERTICAL_ALIGN_* the rectangle is relative to.
+ * x and y are moved and scaled, w and h are scaled.
+ */
+// 0044be80    void CalcScreenPlacement(float* x, float* y, float* w @ eax, float* h @ edx, int32_t horzAlign @ edi, int32_t vertAlign @ ebx)
+inline void CalcScreenPlacement(float* x, float* y, float* w, float* h, int horzAlign, int vertAlign) {
+    ASM_CALL(RETURN_VOID, 0x0044be80, 2, PUSH(x), PUSH(y), EAX(w), EDX(h), EDI(horzAlign), EBX(vertAlign));
+}
+
+/**
+ * Draws the part s0,t0 - s1,t1 of a material (texture coordinates 0 - 1) into a rectangle in real screen pixels,
+ * turned around the center of the rectangle by angle degrees. Renderer function, reached through gfx_funcs.
+ */
+// 100215a0 (gfx)    void R_AddCmdDrawStretchPicRotate(float x, float y, float w, float h, float s0, float t0, float s1, float t1, float angle, float* color, Material* material)
+typedef void (__cdecl *R_AddCmdDrawStretchPicRotate_t)(float x, float y, float w, float h, float s0, float t0, float s1, float t1, float angle, const float* color, void* material);
+#define gfx_funcs_R_AddCmdDrawStretchPicRotate (*((R_AddCmdDrawStretchPicRotate_t*)0x0068a298))
+
+/**
  * Draws a picture with abbility to rotate around the center
  * Internally CalcScreenPlacement() and R_AddCmdDrawQuadPic() are called
  */
