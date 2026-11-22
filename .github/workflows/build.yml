@@ -66,24 +66,34 @@ jobs:
     runs-on: windows-latest
     defaults:
       run:
-        shell: msys2 {0}
+        shell: bash
     steps:
       - uses: actions/checkout@v4
-      - uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW32            # 32-bit mingw-w64 (mss32.dll is a 32-bit DLL)
-          update: false
-          install: >-
-            mingw-w64-i686-gcc mingw-w64-i686-cmake mingw-w64-i686-ninja
-            mingw-w64-i686-nasm mingw-w64-i686-binutils zip
+      # The 32-bit MinGW-w64 toolchain the README asks developers to install (winlibs GCC 14.2.0 with CMake, Ninja, NASM and
+      # binutils), pinned by its SHA-256. MSYS2's MINGW32 packages, used before, no longer install (setup-msys2 failed twice on
+      # 2026-11-22; MSYS2 is phasing out 32-bit environments).
+      - name: Install MinGW-w64 (winlibs i686, GCC 14.2.0)
+        run: |
+          set -eux
+          url="https://github.com/brechtsanders/winlibs_mingw/releases/download/14.2.0posix-19.1.1-12.0.0-msvcrt-r2/winlibs-i686-posix-dwarf-gcc-14.2.0-mingw-w64msvcrt-12.0.0-r2.7z"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/mingw.7z" "$url"
+          echo "ddaecd73ddd33f7fbb8c4ac05edc8a8691845feee523d6b5149f887e2a60c800  $RUNNER_TEMP/mingw.7z" | sha256sum -c -
+          7z x -y -o"$RUNNER_TEMP" "$RUNNER_TEMP/mingw.7z" > /dev/null
+          cygpath -w "$RUNNER_TEMP/mingw32/bin" >> "$GITHUB_PATH"
       - name: Generate version headers
         run: bash .github/scripts/gen-version.sh "${{ inputs.version }}"
       - name: Build (Release, two-pass for symbols)
+        env:
+          CC: gcc
+          CXX: g++
         run: |
           set -eux
+          gcc --version | head -1
           cmake -S . -B build/win-Release -G Ninja -DCMAKE_BUILD_TYPE=Release -DEXCEPTION_TEST=OFF
-          cmake --build build/win-Release --target mss32 --parallel
-          cmake --build build/win-Release --target mss32 --parallel
+          # binutils 2.43.1's assembler sometimes rejects valid input when many run at once; ninja rebuilds only what failed
+          build() { cmake --build build/win-Release --target mss32 --parallel || cmake --build build/win-Release --target mss32 --parallel || cmake --build build/win-Release --target mss32 --parallel; }
+          build
+          build
           mv bin/windows/mss32.build.dll bin/windows/mss32.dll
       # Upload the raw .dll only; the human-install zip is assembled in the publish job (no zip-in-zip).
       - uses: actions/upload-artifact@v4
